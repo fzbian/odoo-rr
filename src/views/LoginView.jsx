@@ -3,10 +3,11 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { authenticate, executeKw } from '../lib/odoo';
 import '../index.css';
+import { getEnv } from '../lib/env';
 
-const DB = process.env.REACT_APP_ODOO_DB;
-const USER = process.env.REACT_APP_ODOO_USER;
-const PASS = process.env.REACT_APP_ODOO_PASSWORD;
+const DB = getEnv('REACT_APP_ODOO_DB');
+const USER = getEnv('REACT_APP_ODOO_USER');
+const PASS = getEnv('REACT_APP_ODOO_PASSWORD');
 
 export default function LoginView() {
   const nav = useNavigate();

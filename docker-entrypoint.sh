@@ -1,5 +1,5 @@
 #!/bin/sh
-# Genera env-config.js incluso si algunas variables no están definidas.
+# Genera env-config.js (runtime env) incluso si algunas variables no están definidas.
 set -e
 
 RUNTIME_FILE=/usr/share/nginx/html/env-config.js

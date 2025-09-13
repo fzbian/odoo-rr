@@ -1,5 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { authenticate as odooAuth, getSessionInfo, executeKw as odooExecuteKw, destroySession } from '../lib/odoo';
+import { getEnv } from '../lib/env';
 
 const AuthContext = createContext(null);
 
@@ -17,9 +18,9 @@ export function AuthProvider({ children }) {
     batchPendingRef.current = 0; }
   }, []);
 
-  const REACT_DB = process.env.REACT_APP_ODOO_DB;
-  const REACT_USER = process.env.REACT_APP_ODOO_USER;
-  const REACT_PASS = process.env.REACT_APP_ODOO_PASSWORD;
+  const REACT_DB = getEnv('REACT_APP_ODOO_DB');
+  const REACT_USER = getEnv('REACT_APP_ODOO_USER');
+  const REACT_PASS = getEnv('REACT_APP_ODOO_PASSWORD');
 
   const ensureService = useCallback(async () => {
     if (service) return service;

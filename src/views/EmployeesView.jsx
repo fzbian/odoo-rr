@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { authenticate, executeKw } from '../lib/odoo';
 import { useAuth } from '../context/AuthContext';
+import { getEnv } from '../lib/env';
 import { useNavigate } from 'react-router-dom';
 
-const DB = process.env.REACT_APP_ODOO_DB;
-const USER = process.env.REACT_APP_ODOO_USER;
-const PASS = process.env.REACT_APP_ODOO_PASSWORD;
+const DB = getEnv('REACT_APP_ODOO_DB');
+const USER = getEnv('REACT_APP_ODOO_USER');
+const PASS = getEnv('REACT_APP_ODOO_PASSWORD');
 
 export default function EmployeesView() {
   const nav = useNavigate();
