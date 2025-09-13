@@ -1,0 +1,17 @@
+version: '3.9'
+services:
+  traspasos:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        REACT_APP_ODOO_DB: ${REACT_APP_ODOO_DB}
+        REACT_APP_ODOO_USER: ${REACT_APP_ODOO_USER}
+        REACT_APP_ODOO_PASSWORD: ${REACT_APP_ODOO_PASSWORD}
+        REACT_APP_NOTIFY_URL: ${REACT_APP_NOTIFY_URL}
+        REACT_APP_NOTIFY_APIKEY: ${REACT_APP_NOTIFY_APIKEY}
+        REACT_APP_NOTIFY_NUMBER_TRASPASOS: ${REACT_APP_NOTIFY_NUMBER_TRASPASOS}
+        REACT_APP_NOTIFY_NUMBER_PEDIDOS_BOD: ${REACT_APP_NOTIFY_NUMBER_PEDIDOS_BOD}
+    ports:
+      - "8080:80"
+    restart: unless-stopped
