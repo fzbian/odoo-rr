@@ -1,10 +1,11 @@
 // Utilidad para enviar mensajes de WhatsApp usando variables de entorno
 // Requiere definir en .env (prefijo REACT_APP_) para que CRA las exponga en cliente.
 
-const URL = process.env.REACT_APP_NOTIFY_URL;
-const APIKEY = process.env.REACT_APP_NOTIFY_APIKEY;
-export const NUMBER_TRASPASOS = process.env.REACT_APP_NOTIFY_NUMBER_TRASPASOS;
-export const NUMBER_PEDIDOS_BOD = process.env.REACT_APP_NOTIFY_NUMBER_PEDIDOS_BOD;
+import { getEnv } from './env';
+const URL = getEnv('REACT_APP_NOTIFY_URL');
+const APIKEY = getEnv('REACT_APP_NOTIFY_APIKEY');
+export const NUMBER_TRASPASOS = getEnv('REACT_APP_NOTIFY_NUMBER_TRASPASOS');
+export const NUMBER_PEDIDOS_BOD = getEnv('REACT_APP_NOTIFY_NUMBER_PEDIDOS_BOD');
 
 export async function sendWhatsAppMessage({ number, text }) {
   if(!URL || !APIKEY) return { ok:false, error:'Notify config missing' };

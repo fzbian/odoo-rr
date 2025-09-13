@@ -90,6 +90,6 @@ Servicio disponible en http://localhost:8080
 5. Health check opcional: `/healthz`.
 
 ### Variables y rebuild
-Las variables con prefijo `REACT_APP_` quedan embebidas al momento del build. Cambios requieren rebuild.
+Las variables con prefijo `REACT_APP_` ahora se inyectan en runtime vía `env-config.js` generado por `docker-entrypoint.sh`. Puedes cambiarlas en Coolify (Environment Variables) y solo reiniciar el contenedor (sin rebuild) si mantienes la misma imagen.
 
-Para soporte runtime (no implementado aquí) se podría servir `/env.json` y cargarlo antes de montar React.
+Si haces un rebuild, igualmente funcionará: el script siempre escribe `env-config.js` al arranque.
