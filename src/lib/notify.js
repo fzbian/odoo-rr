@@ -2,7 +2,11 @@
 // Requiere definir en .env (prefijo REACT_APP_) para que CRA las exponga en cliente.
 
 import { getEnv } from './env';
-const URL = getEnv('REACT_APP_NOTIFY_URL');
+let URL = getEnv('REACT_APP_NOTIFY_URL');
+// Si estamos bajo HTTPS y la URL es http sin cifrar al host externo, redirigimos a proxy local /notify para evitar Mixed Content
+if (typeof window !== 'undefined' && window.location.protocol === 'https:' && URL && URL.startsWith('http://')) {
+  URL = '/notify';
+}
 const APIKEY = getEnv('REACT_APP_NOTIFY_APIKEY');
 export const NUMBER_TRASPASOS = getEnv('REACT_APP_NOTIFY_NUMBER_TRASPASOS');
 export const NUMBER_PEDIDOS_BOD = getEnv('REACT_APP_NOTIFY_NUMBER_PEDIDOS_BOD');
