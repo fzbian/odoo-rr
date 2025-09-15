@@ -10,17 +10,27 @@ export const NUMBER_PEDIDOS_BOD = getEnv('REACT_APP_NOTIFY_NUMBER_PEDIDOS_BOD');
 export async function sendWhatsAppMessage({ number, text }) {
   if(!URL || !APIKEY) return { ok:false, error:'Notify config missing' };
   try {
+    const payload = { number, text };
     const res = await fetch(URL, {
       method: 'POST',
       headers: {
         'Content-Type':'application/json',
-        'apikey': APIKEY
+        // Algunos gateways usan 'x-api-key'; mantenemos ambos por compatibilidad
+        'apikey': APIKEY,
+        'x-api-key': APIKEY
       },
-      body: JSON.stringify({ number, text })
+      body: JSON.stringify(payload)
     });
-    if(!res.ok) return { ok:false, status:res.status, error: await safeText(res) };
+    if(!res.ok){
+      const errTxt = await safeText(res);
+      // Log detallado para diagnósticos (solo consola cliente)
+      // No lanzar excepción: devolvemos estructura para que el caller decida.
+      console.warn('[notify] fallo HTTP', res.status, errTxt, { url: URL, payload });
+      return { ok:false, status:res.status, error: errTxt };
+    }
     return { ok:true };
   } catch(e){
+    console.warn('[notify] exception', e.message);
     return { ok:false, error:e.message };
   }
 }
