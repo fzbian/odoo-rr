@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
+import { applyPageMeta } from './lib/meta';
 import { useProducts } from './hooks/useProducts';
 import { createInternalTransfer } from './lib/transfers';
 import { useAuth } from './context/AuthContext';
@@ -28,6 +29,7 @@ function formatQty(n){
   const v=Number(n); const isInt=Math.abs(v-Math.round(v))<1e-9;
   return new Intl.NumberFormat('es-ES',{minimumFractionDigits:0,maximumFractionDigits:isInt?0:2}).format(v);
 }
+
 
 // Editor de una línea de traspaso
 function LineEditor({ index, line, onChange, onRemove, disabled, filterProducts, productsLoaded, productsLoading }) {
@@ -122,6 +124,7 @@ function LineEditor({ index, line, onChange, onRemove, disabled, filterProducts,
 }
 
 export default function TransferPage() {
+  useEffect(()=> { applyPageMeta({ title: 'Traspasos', favicon: '/logo192.png' }); },[]);
   const { auth, executeKwSilent } = useAuth();
   const { filter: filterProducts, loaded: productsLoaded, loading: productsLoading } = useProducts();
   const [activeTab, setActiveTab] = useState('view'); // 'view' | 'create'

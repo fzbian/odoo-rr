@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
+import { applyPageMeta } from '../lib/meta';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { authenticate, executeKw } from '../lib/odoo';
@@ -37,6 +38,7 @@ export default function LoginView() {
   }, []);
 
   useEffect(() => {
+  applyPageMeta({ title: 'Login', favicon: '/logo192.png' });
     if (hydrated && auth) {
       nav('/traspasos', { replace: true });
       return;

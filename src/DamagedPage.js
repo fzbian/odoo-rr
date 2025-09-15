@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
+import { applyPageMeta } from './lib/meta';
 import { useAuth } from './context/AuthContext';
 import SessionBanner from './components/SessionBanner';
 import { sendWhatsAppMessage, NUMBER_TRASPASOS, bold } from './lib/notify';
@@ -12,6 +13,7 @@ function formatQty(n){
 }
 
 export default function DamagedPage(){
+  useEffect(()=> { applyPageMeta({ title: 'Averiados', favicon: '/logo192.png' }); }, []);
   const { auth, executeKwSilent, executeKw } = useAuth();
   const canAccess = auth?.employee && auth?.isDeveloper; // Department Administration
   const [damagedLocId, setDamagedLocId] = useState(null); // id de ubicación averiados derivado de quants

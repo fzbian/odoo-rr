@@ -1,8 +1,10 @@
-import React from 'react';
+import React, { useEffect } from 'react';
+import { applyPageMeta } from './lib/meta';
 import { isRouteErrorResponse, useRouteError, Link } from 'react-router-dom';
 import './index.css';
 
 export default function ErrorPage() {
+  useEffect(()=> { applyPageMeta({ title: 'Error', favicon: '/logo192.png' }); }, []);
   const error = useRouteError();
   let title = 'Ha ocurrido un error';
   let detail = 'Intenta volver al inicio o recarga la página.';

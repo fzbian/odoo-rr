@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { applyPageMeta } from './lib/meta';
 import { useAuth } from './context/AuthContext';
 import { parseOdooDate } from './utils/dates';
 
@@ -81,6 +82,7 @@ function friendlyLocationName(raw){
 }
 
 export default function StockPage(){
+  useEffect(()=> { applyPageMeta({ title: 'Inventario', favicon: '/logo192.png' }); }, []);
   const { auth, executeKw } = useAuth();
   const [locations, setLocations] = useState([]);
   const [warehouses, setWarehouses] = useState([]);

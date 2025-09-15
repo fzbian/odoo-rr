@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { applyPageMeta } from './lib/meta';
 import { useAuth } from './context/AuthContext';
 import { useProducts } from './hooks/useProducts';
 
@@ -11,6 +12,7 @@ function formatQty(n){
 
 // Página de Reportes (antes Movimientos / Ventas): filtra rango de fechas, almacén y producto, mostrando totales y movimientos.
 export default function SalesPage(){
+  useEffect(()=> { applyPageMeta({ title: 'Reportes Ventas', favicon: '/logo192.png' }); }, []);
   const { executeKw } = useAuth();
   const [warehouses, setWarehouses] = useState([]);
   const [warehouseId, setWarehouseId] = useState('');

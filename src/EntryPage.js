@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { applyPageMeta } from './lib/meta';
 import { useAuth } from './context/AuthContext';
 import { sendWhatsAppMessage, NUMBER_TRASPASOS, bold } from './lib/notify';
 import { useProducts } from './hooks/useProducts';
@@ -12,6 +13,7 @@ function formatQty(n){
 
 // Página de creación de entradas (picking incoming) con promedio de costos
 export default function EntryPage(){
+  useEffect(()=> { applyPageMeta({ title: 'Entradas', favicon: '/logo192.png' }); }, []);
   const { auth, executeKw } = useAuth();
   const canEntry = auth?.employee && auth?.isDeveloper; // Department Administration
 

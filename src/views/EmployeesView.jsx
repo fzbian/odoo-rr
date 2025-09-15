@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { applyPageMeta } from '../lib/meta';
 import { authenticate, executeKw } from '../lib/odoo';
 import { useAuth } from '../context/AuthContext';
 import { getEnv } from '../lib/env';
@@ -18,6 +19,7 @@ export default function EmployeesView() {
   const [signing, setSigning] = useState({}); // map emp.id -> loading
 
   useEffect(() => {
+    applyPageMeta({ title: 'Empleados', favicon: '/logo192.png' });
     let cancelled = false;
     async function run() {
       setLoading(true);

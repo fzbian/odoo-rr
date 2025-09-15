@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
+import { applyPageMeta } from './lib/meta';
 import { useAuth } from './context/AuthContext';
 import { parseOdooDate } from './utils/dates';
 import { sendWhatsAppMessage, NUMBER_PEDIDOS_BOD, bold } from './lib/notify';
@@ -209,6 +210,7 @@ function formatCurrency(v){
 }
 
 export default function BodegaPage(){
+  useEffect(()=> { applyPageMeta({ title: 'Bodega POS', favicon: '/logo192.png' }); }, []);
   dbg('COMPONENT fn invoked');
   const { executeKwSilent: baseExec, executeRpc, auth, hydrated, startBatch, endBatch } = useAuth();
   const isAdmin = auth?.isDeveloper;
