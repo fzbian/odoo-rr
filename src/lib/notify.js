@@ -2,10 +2,16 @@
 // Requiere definir en .env (prefijo REACT_APP_) para que CRA las exponga en cliente.
 
 import { getEnv } from './env';
-let URL = getEnv('REACT_APP_NOTIFY_URL');
-// Si estamos bajo HTTPS y la URL es http sin cifrar al host externo, redirigimos a proxy local /notify para evitar Mixed Content
-if (typeof window !== 'undefined' && window.location.protocol === 'https:' && URL && URL.startsWith('http://')) {
-  URL = '/notify';
+// Estrategia final: en producción (HTTPS) SIEMPRE usamos el proxy /notify para evitar Mixed Content.
+// En desarrollo (http://localhost) mantenemos la URL original (REACT_APP_NOTIFY_URL) para facilitar pruebas directas.
+const RAW_URL = getEnv('REACT_APP_NOTIFY_URL');
+const IS_HTTPS = (typeof window !== 'undefined' && window.location.protocol === 'https:');
+let URL = IS_HTTPS ? '/notify' : (RAW_URL || '/notify');
+// Fallback adicional: si por alguna razón RAW_URL es http y estamos en https, permanece /notify.
+// Debug mínimo (solo primera carga)
+if (typeof window !== 'undefined' && !window.__NOTIFY_URL_LOGGED__) {
+  window.__NOTIFY_URL_LOGGED__ = true;
+  try { console.info('[notify] endpoint activo:', URL); } catch(_) {}
 }
 const APIKEY = getEnv('REACT_APP_NOTIFY_APIKEY');
 export const NUMBER_TRASPASOS = getEnv('REACT_APP_NOTIFY_NUMBER_TRASPASOS');
