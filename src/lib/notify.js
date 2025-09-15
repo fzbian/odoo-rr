@@ -2,12 +2,22 @@
 // Requiere definir en .env (prefijo REACT_APP_) para que CRA las exponga en cliente.
 
 import { getEnv } from './env';
-// Estrategia final: en producción (HTTPS) SIEMPRE usamos el proxy /notify para evitar Mixed Content.
-// En desarrollo (http://localhost) mantenemos la URL original (REACT_APP_NOTIFY_URL) para facilitar pruebas directas.
+// Estrategia actual:
+// - Si la variable es https://... se usa directamente (tanto en dev como prod) -> sin proxy.
+// - Si es http://... y la página está en https, se usa /notify (proxy Nginx) para evitar Mixed Content.
+// - Si está vacía, se usa /notify como fallback.
 const RAW_URL = getEnv('REACT_APP_NOTIFY_URL');
-const IS_HTTPS = (typeof window !== 'undefined' && window.location.protocol === 'https:');
-let URL = IS_HTTPS ? '/notify' : (RAW_URL || '/notify');
-// Fallback adicional: si por alguna razón RAW_URL es http y estamos en https, permanece /notify.
+const PAGE_HTTPS = (typeof window !== 'undefined' && window.location.protocol === 'https:');
+let URL = '/notify';
+if (RAW_URL) {
+  if (/^https:\/\//i.test(RAW_URL)) {
+    URL = RAW_URL; // seguro
+  } else if (/^http:\/\//i.test(RAW_URL)) {
+    URL = PAGE_HTTPS ? '/notify' : RAW_URL; // evitar mixed content si la página es https
+  } else if (RAW_URL.startsWith('/')) {
+    URL = RAW_URL; // ruta relativa explícita
+  }
+}
 // Debug mínimo (solo primera carga)
 if (typeof window !== 'undefined' && !window.__NOTIFY_URL_LOGGED__) {
   window.__NOTIFY_URL_LOGGED__ = true;
