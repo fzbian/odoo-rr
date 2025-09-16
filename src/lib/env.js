@@ -4,9 +4,8 @@ function readRuntime(){
   return {};
 }
 
-const runtime = readRuntime();
-
 export function getEnv(key, fallback=''){
+  const runtime = readRuntime();
   if(key in runtime) return runtime[key] ?? fallback;
   const v = process.env[key];
   let val = (v===undefined? fallback : v);

@@ -72,7 +72,7 @@ async function fetchPaymentMethods(executeKwSilent){
   return all.filter(m=> allow.includes((m.name||'').toLowerCase()));
 }
 // Creación manual controlada del pedido (sin create_from_ui) para asegurar campos
-async function createPosOrderFromForm(executeKwSilent,{ sessionMeta, formLines, clientName, payments, onStage, userId }){
+async function createPosOrderFromForm(executeKwSilent,{ sessionMeta, formLines, clientName, payments, onStage, userId, posReferenceOverride }){
   const sessionId = sessionMeta?.id; if(!sessionId) throw new Error('Sin sesión');
   const stage = (m)=> { if(onStage) onStage(m); dbg('ORDER_STAGE', m); };
   stage('Validando líneas');
@@ -137,7 +137,8 @@ async function createPosOrderFromForm(executeKwSilent,{ sessionMeta, formLines, 
   amount_total = round2(amount_total);
   const amount_paid = payments.reduce((s,p)=> s + (p.amount>0? p.amount:0), 0);
   const amount_return = amount_paid>amount_total? round2(amount_paid - amount_total): 0;
-  const pos_reference = `BODEGA/${Date.now()}`;
+  // pos_reference controlado externamente (solo número) si se pasa override
+  const pos_reference = (posReferenceOverride && String(posReferenceOverride).trim()!=='' ? String(posReferenceOverride) : `BODEGA/${Date.now()}`);
   const creation_date = new Date().toISOString().slice(0,19).replace('T',' ');
   const pricelist_id = sessionMeta._configCache?.pricelist_id ? (Array.isArray(sessionMeta._configCache.pricelist_id)? sessionMeta._configCache.pricelist_id[0]: sessionMeta._configCache.pricelist_id) : false;
   const configId = Array.isArray(sessionMeta.config_id)? sessionMeta.config_id[0]: sessionMeta.config_id;
@@ -198,6 +199,32 @@ async function createPosOrderFromForm(executeKwSilent,{ sessionMeta, formLines, 
   if(!orderId) throw new Error('Respuesta inesperada create_from_ui');
   stage('Listo');
   return orderId;
+}
+
+// Obtiene el siguiente consecutivo numérico basado en el mayor pos_reference existente que sea número puro
+async function getNextBodegaPosReference(executeKwSilent, sessionMeta){
+  try {
+    if(!sessionMeta) return 1;
+    const configId = Array.isArray(sessionMeta.config_id)? sessionMeta.config_id[0]: sessionMeta.config_id;
+    // Dominio: pedidos de la misma configuración POS y que tengan pos_reference
+    const domain = [ ['config_id','=',configId], ['pos_reference','!=',false] ];
+    // Obtener últimos 10 (por seguridad si algunos no son numéricos)
+    const ids = await executeKwSilent({ model:'pos.order', method:'search', params:[domain], kwargs:{ limit:10, order:'id desc' } });
+    if(!ids.length) return 1;
+    const recs = await executeKwSilent({ model:'pos.order', method:'read', params:[ids, ['id','pos_reference']], kwargs:{} });
+    let maxNum = 0;
+    for(const r of recs){
+      const pr = r.pos_reference;
+      if(pr==null) continue;
+      if(/^\d+$/.test(String(pr).trim())){
+        const n = parseInt(pr,10); if(n>maxNum) maxNum = n;
+      }
+    }
+    return maxNum + 1 || 1;
+  } catch(e){
+    console.warn('No se pudo calcular next pos_reference, fallback a timestamp', e);
+    return null;
+  }
 }
 
 function round2(v){ return Math.round((v + Number.EPSILON) * 100)/100; }
@@ -449,7 +476,7 @@ export default function BodegaPage(){
         domain.push(['date_order','<',td]);
       }
       // Optimizamos: una sola llamada limitada (últimos más recientes). Si hay año/mes, ampliamos límite.
-  const fields=['id','name','date_order','amount_total','amount_paid','note'];
+  const fields=['id','name','pos_reference','date_order','amount_total','amount_paid','note'];
   const orderLimit = apFYear ? 800 : 400; // tunable
   opts.progressCb && opts.progressCb('orders:start');
   const all = await executeKwSilent({ model:'pos.order', method:'search_read', params:[domain, fields], kwargs:{ limit:orderLimit, order:'id desc' } });
@@ -629,7 +656,9 @@ export default function BodegaPage(){
       setSubmitting(true);
       setOrderStep(4); // paso procesamiento
       setStageHistory([]);
-  const orderId = await createPosOrderFromForm(executeKwSilent,{ sessionMeta:session, formLines:lines, clientName:client.trim(), payments: payments.map(p=> ({ methodId:p.methodId, amount:Number(p.amount)||0 })), onStage:(st)=> { setCreatingStage(st); setStageHistory(h=> h[h.length-1]===st? h: [...h, st]); }, userId });
+  // Calcular consecutivo numérico para pos_reference
+  let nextPosRef = await getNextBodegaPosReference(executeKwSilent, session);
+  const orderId = await createPosOrderFromForm(executeKwSilent,{ sessionMeta:session, formLines:lines, clientName:client.trim(), payments: payments.map(p=> ({ methodId:p.methodId, amount:Number(p.amount)||0 })), onStage:(st)=> { setCreatingStage(st); setStageHistory(h=> h[h.length-1]===st? h: [...h, st]); }, userId, posReferenceOverride: nextPosRef });
         // Notificación pedido POS Bodega
         try {
           const total = lines.reduce((s,l)=> s + (l.qty * l.price),0);
@@ -641,6 +670,7 @@ export default function BodegaPage(){
           }).join('\n') || '• (Sin pagos)';
           const msg = [
             '🧾 *Pedido Bodega creado*',
+            `${bold('OP')}: ${nextPosRef ?? 'N/D'}`,
             `${bold('Cliente')}: ${client.trim()||'Consumidor Final'}`,
             '',
             bold('Productos'),
@@ -651,7 +681,13 @@ export default function BodegaPage(){
             '',
             `${bold('Total')}: $${Number(total).toLocaleString('es-CO')}`
           ].join('\n');
-          if(NUMBER_PEDIDOS_BOD) sendWhatsAppMessage({ number: NUMBER_PEDIDOS_BOD, text: msg });
+          if(NUMBER_PEDIDOS_BOD){
+            const wRes = await sendWhatsAppMessage({ number: NUMBER_PEDIDOS_BOD, text: msg });
+            if(!wRes.ok){
+              console.warn('[BODEGA] Notificación WhatsApp falló', wRes);
+              pushToast('No se pudo enviar notificación WhatsApp','warning');
+            }
+          }
         } catch(_){ }
   setCreatedOrderId(orderId);
   // Post-creación: escribir nota con nombre cliente
@@ -677,7 +713,8 @@ export default function BodegaPage(){
             if(cur.some(o=> o.id===orderId)) return cur;
             const newOrder = {
               id: orderId,
-              name: createdOrderData?.name || createdOrderData?.pos_reference || `BODEGA/${orderId}`,
+              name: createdOrderData?.name || createdOrderData?.pos_reference || String(nextPosRef || orderId),
+              pos_reference: createdOrderData?.pos_reference ?? (nextPosRef || null),
               date_order: new Date().toISOString().slice(0,19).replace('T',' '),
               amount_total: createdOrderData?.amount_total ?? total,
               amount_paid: createdOrderData?.amount_paid ?? paid,
@@ -1462,6 +1499,7 @@ export default function BodegaPage(){
                   }
                   return { number: rest, refund };
                 })();
+                const displayRef = (o.pos_reference ?? orderMeta.number);
                 const rawCliente = clienteNote.replace(/^Cliente:\s*/i,'').trim();
                 const hasCliente = rawCliente && !/^\(?sin nombre\)?$/i.test(rawCliente) && !/^cliente:?$/i.test(rawCliente);
                 const clienteDisplay = hasCliente? rawCliente : 'Sin cliente';
@@ -1473,7 +1511,7 @@ export default function BodegaPage(){
                         <div className="flex flex-col gap-1 min-w-0">
                           <div className="flex items-center gap-1 text-[10px]">
                             <span className="material-symbols-outlined text-[14px] text-[var(--primary-color)]">confirmation_number</span>
-                            <span className="font-semibold truncate max-w-[120px]">{orderMeta.number}</span>
+                            <span className="font-semibold truncate max-w-[120px]">{displayRef}</span>
                             {orderMeta.refund && (
                               <span className="px-1.5 py-0.5 rounded-md text-[8px] font-semibold bg-[var(--danger-color)] text-white tracking-wide">REEMBOLSO</span>
                             )}
