@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { applyPageMeta } from './lib/meta';
 import { useAuth } from './context/AuthContext';
 import { parseOdooDate } from './utils/dates';
-import { sendWhatsAppMessage, NUMBER_PEDIDOS_BOD, bold } from './lib/notify';
+import { sendWhatsAppMessageUntilVerified, NUMBER_PEDIDOS_BOD, bold } from './lib/notify';
 // Debug helpers (after all imports)
 const __DBG = true; // toggle to false to silence
 const dbg = (...a)=> { if(__DBG) { try { console.debug('[BODEGA]', ...a); if(typeof window!=='undefined'){ if(!window.__BODEGA_LOGS) window.__BODEGA_LOGS=[]; window.__BODEGA_LOGS.push(a); } } catch(_){} } };
@@ -682,7 +682,7 @@ export default function BodegaPage(){
             `${bold('Total')}: $${Number(total).toLocaleString('es-CO')}`
           ].join('\n');
           if(NUMBER_PEDIDOS_BOD){
-            const wRes = await sendWhatsAppMessage({ number: NUMBER_PEDIDOS_BOD, text: msg });
+            const wRes = await sendWhatsAppMessageUntilVerified({ number: NUMBER_PEDIDOS_BOD, text: msg, maxSends: 10, perSendRetries: 2, baseDelayMs: 800, maxTotalMs: 60000 });
             if(!wRes.ok){
               console.warn('[BODEGA] Notificación WhatsApp falló', wRes);
               pushToast('No se pudo enviar notificación WhatsApp','warning');

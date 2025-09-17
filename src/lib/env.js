@@ -16,6 +16,12 @@ export function getEnv(key, fallback=''){
   return val;
 }
 
+// Lee únicamente variables de build (process.env) sin sobrescribir con runtime.
+export function getBuildEnv(key, fallback=''){
+  const v = process.env[key];
+  return v === undefined ? fallback : v;
+}
+
 export function listEnv(keys){
   return Object.fromEntries(keys.map(k=> [k, getEnv(k,'')]));
 }

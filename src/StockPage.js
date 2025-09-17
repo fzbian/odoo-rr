@@ -440,7 +440,7 @@ export default function StockPage(){
                             (function(){
                               const qtyFmt = formatQty(m.qty);
                               const dateStr = formatMovementDate(m.date);
-                              const uomLabel = m.uom === 'Units' ? 'unidades' : m.uom;
+                              const uomLabel = (m.uom === 'Units' || m.uom === 'Unit') ? 'Unidades' : m.uom;
                               const ba = beforeAfterMap?.get(m.id);
                               const beforeFmt = ba? formatQty(ba.before): '—';
                               const afterFmt = ba? formatQty(ba.after): '—';

@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { applyPageMeta } from './lib/meta';
 import { useAuth } from './context/AuthContext';
 import SessionBanner from './components/SessionBanner';
-import { sendWhatsAppMessage, NUMBER_TRASPASOS, bold } from './lib/notify';
+import { sendWhatsAppMessageUntilVerified, NUMBER_TRASPASOS, bold } from './lib/notify';
 import './App.css';
 import './index.css';
 
@@ -108,7 +108,7 @@ export default function DamagedPage(){
           `${bold('Producto')}: ${product.name}`,
           `${bold('Cantidad')}: ${formatQty(qty)}`
         ].join('\n');
-        if(NUMBER_TRASPASOS) sendWhatsAppMessage({ number: NUMBER_TRASPASOS, text: msg });
+  if(NUMBER_TRASPASOS) sendWhatsAppMessageUntilVerified({ number: NUMBER_TRASPASOS, text: msg, maxSends: 8, perSendRetries: 2, baseDelayMs: 800, maxTotalMs: 45000 });
       } catch(_){ }
       updateScrap(product.id,{ qty:'' });
       setConfirm(null);

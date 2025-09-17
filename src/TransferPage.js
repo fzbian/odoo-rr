@@ -5,7 +5,7 @@ import { createInternalTransfer } from './lib/transfers';
 import { useAuth } from './context/AuthContext';
 import './index.css';
 import './App.css';
-import { sendWhatsAppMessage, NUMBER_TRASPASOS, bold } from './lib/notify';
+import { sendWhatsAppMessageUntilVerified, NUMBER_TRASPASOS, bold } from './lib/notify';
 import SessionBanner from './components/SessionBanner';
 import { parseOdooDate, formatDateTime } from './utils/dates';
 
@@ -13,6 +13,26 @@ function formatTransferDate(iso){
   const d = parseOdooDate(iso);
   if(!d) return iso || '';
   return formatDateTime(d);
+}
+
+function formatDMY(iso){
+  const d = parseOdooDate(iso);
+  if(!d) return '';
+  const dd = String(d.getDate()).padStart(2,'0');
+  const mm = String(d.getMonth()+1).padStart(2,'0');
+  const yyyy = d.getFullYear();
+  return `${dd}/${mm}/${yyyy}`;
+}
+
+function formatTime12(iso){
+  const d = parseOdooDate(iso);
+  if(!d) return '';
+  let h = d.getHours();
+  const m = String(d.getMinutes()).padStart(2,'0');
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  h = h % 12; if(h === 0) h = 12;
+  const hh = String(h).padStart(2,'0');
+  return `${hh}:${m} ${ampm}`;
 }
 
 function useDebounced(value, delay) {
@@ -28,6 +48,12 @@ function formatQty(n){
   if(!Number.isFinite(n)) return '—';
   const v=Number(n); const isInt=Math.abs(v-Math.round(v))<1e-9;
   return new Intl.NumberFormat('es-ES',{minimumFractionDigits:0,maximumFractionDigits:isInt?0:2}).format(v);
+}
+
+function formatUom(u){
+  const s = (u==null? '': String(u)).trim();
+  if(!s) return '';
+  return /^units?$/i.test(s) ? 'Unidades' : s;
 }
 
 
@@ -54,10 +80,32 @@ function LineEditor({ index, line, onChange, onRemove, disabled, filterProducts,
     setQ(p.name);
   }
 
-  function changeQty(v){
-    const n = Number(v);
-    if(!Number.isFinite(n)) return;
-    onChange(index, { quantity: n });
+  // Permitir edición libre de cantidad usando un buffer de texto
+  function handleQtyChange(raw){
+    if(raw === ''){
+      onChange(index, { qtyInput: '' });
+      return;
+    }
+    const norm = String(raw).replace(',', '.');
+    const n = parseFloat(norm);
+    if(!Number.isFinite(n)){
+      // Ignorar caracteres no numéricos adicionales
+      return;
+    }
+    if(n < 0){
+      // No permitir negativos
+      return;
+    }
+    onChange(index, { quantity: n, qtyInput: raw });
+  }
+
+  function handleQtyBlur(){
+    if(line.qtyInput === '' || !Number.isFinite(line.quantity) || line.quantity <= 0){
+      // Restaurar a 1 para evitar cantidad inválida
+      onChange(index, { quantity: 1, qtyInput: undefined });
+      return;
+    }
+    onChange(index, { qtyInput: undefined });
   }
 
   return (
@@ -87,9 +135,17 @@ function LineEditor({ index, line, onChange, onRemove, disabled, filterProducts,
         </div>
         <div className="w-24">
           <label className="text-[9px] font-medium text-[var(--text-secondary-color)] uppercase tracking-wide">Cant.</label>
-          <input type="number" min={0} step={0.01} className="form-field mt-1" disabled={disabled || !line.productId}
-            value={line.quantity}
-            onChange={e=> changeQty(e.target.value)} />
+          <input
+            type="number"
+            min={0}
+            step={0.01}
+            className="form-field mt-1"
+            disabled={disabled || !line.productId}
+            value={line.qtyInput !== undefined ? line.qtyInput : (Number.isFinite(line.quantity) ? String(line.quantity) : '')}
+            onChange={e=> handleQtyChange(e.target.value)}
+            onBlur={handleQtyBlur}
+            inputMode="decimal"
+          />
         </div>
         <div className="pt-5">
           <button type="button" className="btn-icon btn-danger" disabled={disabled} onClick={()=> onRemove(index)} title="Eliminar línea">
@@ -140,6 +196,8 @@ export default function TransferPage() {
   const mvProductQDeb = useDebounced(mvProductQ, 300);
   const [showMvFilters, setShowMvFilters] = useState(false);
   const [movementLines, setMovementLines] = useState([]);
+  const [movementPicks, setMovementPicks] = useState([]); // agrupados por picking
+  const [expandedPick, setExpandedPick] = useState(null); // id picking expandido
   const [loadingMovements, setLoadingMovements] = useState(false);
   const [locations, setLocations] = useState([]);
   const [warehouses, setWarehouses] = useState([]);
@@ -332,7 +390,10 @@ export default function TransferPage() {
           bold('Productos'),
           linesTxt
         ].join('\n');
-        if(NUMBER_TRASPASOS) sendWhatsAppMessage({ number: NUMBER_TRASPASOS, text: msg });
+        if(NUMBER_TRASPASOS) {
+          // No bloquear el flujo de la UI: ejecutar en segundo plano
+          sendWhatsAppMessageUntilVerified({ number: NUMBER_TRASPASOS, text: msg, maxSends: 8, perSendRetries: 2, baseDelayMs: 800, maxTotalMs: 45000 });
+        }
       } catch(_){ /* ignorar */ }
       if (res.warning) setInfo(res.warning);
       // Reset de selección y líneas para nuevo traspaso
@@ -403,7 +464,69 @@ export default function TransferPage() {
           creator: extractCreator(note)
         };
       });
-      setMovementLines(mapped);
+      const isExcludedLocation = (s)=> {
+        const t = String(s||'').trim().toLowerCase();
+        if(!t) return false;
+        // Excluir si menciona el nombre de almacén 'Prueba' o el código/ruta 'PRB/Stock'
+        return t.includes('prueba') || t.startsWith('prb/') || t === 'prb' || t === 'prb/stock' || t.endsWith('/prueba');
+      };
+      const mappedFiltered = mapped.filter(l=> !isExcludedLocation(l.from) && !isExcludedLocation(l.to));
+      setMovementLines(mappedFiltered);
+
+      // Construir agrupación por picking. Si se filtró por producto, traer todas las líneas de esos pickings.
+      let fullLines = lines;
+      if (mvProductId && pickingIds.length) {
+        try {
+          const all = await executeKwSilent({ model:'stock.move.line', method:'search_read', params:[[ ['picking_id','in', pickingIds] ], fields], kwargs:{ limit: 5000 } });
+          all.sort((a,b)=> (a.date>b.date? -1: a.date<b.date? 1: 0));
+          fullLines = all;
+        } catch(_) { /* mantener lines si falla */ }
+      }
+      const baseLines = (mvProductId ? fullLines : lines);
+      const mappedFull = baseLines.map(l=>{
+        const pid = Array.isArray(l.picking_id)? l.picking_id[0]:null;
+        const note = pid? pickingNotes.get(pid):'';
+        return {
+          id:l.id,
+          date:l.date,
+          qty:l.qty_done,
+          uom:Array.isArray(l.product_uom_id)? l.product_uom_id[1]:l.product_uom_id,
+          from:Array.isArray(l.location_id)? l.location_id[1]:l.location_id,
+          fromId:Array.isArray(l.location_id)? l.location_id[0]:l.location_id,
+          to:Array.isArray(l.location_dest_id)? l.location_dest_id[1]:l.location_dest_id,
+          toId:Array.isArray(l.location_dest_id)? l.location_dest_id[0]:l.location_dest_id,
+          ref:l.reference || (Array.isArray(l.picking_id)? l.picking_id[1]:''),
+          productId:Array.isArray(l.product_id)? l.product_id[0]:l.product_id,
+          productName:Array.isArray(l.product_id)? l.product_id[1]:'',
+          pickId: Array.isArray(l.picking_id)? l.picking_id[0]:null,
+          creator: extractCreator(note)
+        };
+      });
+  const mappedFullFiltered = mappedFull.filter(ml => !isExcludedLocation(ml.from) && !isExcludedLocation(ml.to));
+      const pmap = new Map();
+      for (const ml of mappedFullFiltered) {
+        const key = ml.pickId || `ref:${ml.ref}:${ml.date?.slice(0,10)||''}`;
+        if(!pmap.has(key)){
+          pmap.set(key, {
+            id: key,
+            pickId: ml.pickId,
+            ref: ml.ref,
+            date: ml.date,
+            fromId: ml.fromId,
+            from: ml.from,
+            toId: ml.toId,
+            to: ml.to,
+            creator: ml.creator,
+            items: []
+          });
+        }
+        const p = pmap.get(key);
+        if(ml.date && (!p.date || ml.date > p.date)) p.date = ml.date;
+        p.items.push(ml);
+      }
+      const picksArr = Array.from(pmap.values()).filter(g => g.items.length > 0).sort((a,b)=> (a.date>b.date? -1: a.date<b.date? 1: 0));
+      setMovementPicks(picksArr);
+      setExpandedPick(null);
     } catch(e) { /* ignore */ }
     finally { setLoadingMovements(false); }
   },[auth, executeKwSilent, mvOrigin, mvDest, mvProductId, mvLimit, mvFrom, mvTo]);
@@ -464,7 +587,7 @@ export default function TransferPage() {
   }, [result]);
 
   return (
-    <div className="max-w-5xl mx-auto p-6">
+    <div className="container mx-auto max-w-6xl px-3 sm:px-4 pb-10">
       <SessionBanner />
       {confirmStage === 'review' && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -752,10 +875,11 @@ export default function TransferPage() {
           {/* Lista agrupada */}
           {loadingMovements && <div className="text-[10px] text-[var(--text-secondary-color)] flex items-center gap-2"><span className="material-symbols-outlined animate-spin text-[var(--primary-color)]">progress_activity</span>Cargando…</div>}
           {!loadingMovements && movementLines.length===0 && <div className="text-[10px] text-[var(--text-secondary-color)]">Sin resultados</div>}
-          {!!movementLines.length && (()=>{
+          {!loadingMovements && movementPicks.length===0 && <div className="text-[10px] text-[var(--text-secondary-color)]">Sin resultados</div>}
+          {!!movementPicks.length && (()=>{
             // Agrupar por día
             const groups=[]; const dayMap=new Map();
-            movementLines.forEach(m=> { const d=parseOdooDate(m.date); if(!d) return; const key=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); if(!dayMap.has(key)){ dayMap.set(key,{key,date:d,items:[]}); groups.push(dayMap.get(key)); } dayMap.get(key).items.push(m); });
+            movementPicks.forEach(p=> { const d=parseOdooDate(p.date); if(!d) return; const key=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); if(!dayMap.has(key)){ dayMap.set(key,{key,date:d,items:[]}); groups.push(dayMap.get(key)); } dayMap.get(key).items.push(p); });
             groups.sort((a,b)=> b.date.getTime()-a.date.getTime());
             return (
               <div className="space-y-4">
@@ -768,42 +892,60 @@ export default function TransferPage() {
                         <span className="normal-case font-normal text-[11px] truncate">{header.split('. ')[0]}</span>
                       </div>
                       <ul className="divide-y divide-[var(--border-color)]">
-                        {g.items.map(m=>{
-                          const fullDate = formatTransferDate(m.date);
-                          const qtyFmt = formatQty(m.qty);
-                          // Reusar estilo de chips productos
-                          const inbound = mvDest ? m.toId===Number(mvDest) : (m.qty>0);
+                        {g.items.map(p=>{
+                          const dateDMY = formatDMY(p.date);
+                          const time12 = formatTime12(p.date);
+                          const isOpen = expandedPick===p.id;
+                          const anyQty = p.items.reduce((s,it)=> s + Math.abs(Number(it.qty)||0), 0);
+                          // dirección inferida del primer item
+                          const first = p.items[0];
+                          const inbound = mvDest ? first?.toId===Number(mvDest) : (first?.qty>0);
                           let icon; let dirColor;
-                          if(m.qty===0){ icon='arrow_forward'; dirColor='text-amber-500'; }
+                          if(!first || first.qty===0){ icon='arrow_forward'; dirColor='text-amber-500'; }
                           else if(inbound){ icon='arrow_upward'; dirColor='text-[var(--success-color)]'; }
                           else { icon='arrow_downward'; dirColor='text-[var(--danger-color)]'; }
                           return (
-                            <li key={m.id} className="p-3 flex flex-col gap-2 sm:gap-1 text-[10px] sm:text-[11px]">
-                              <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-1 sm:gap-2">
-                                <div className="flex items-center gap-1">
-                                  <span className="px-2 py-0.5 rounded-full bg-[var(--dark-color)] border border-[var(--border-color)] text-[9px] font-mono">{m.ref || '—'}</span>
+                            <li key={p.id} className="p-3 flex flex-col gap-2 sm:gap-1 text-[10px] sm:text-[11px]">
+                              <button onClick={()=> setExpandedPick(prev=> prev===p.id? null:p.id)} className="flex w-full flex-col items-start gap-1 sm:flex-row sm:items-center sm:justify-between text-left">
+                                <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-1 sm:gap-2">
+                                  <div className="flex items-center gap-1 flex-wrap">
+                                    <span className="px-2 py-0.5 rounded-full bg-[var(--dark-color)] border border-[var(--border-color)] text-[9px] font-mono">{p.ref || '—'}</span>
+                                    {dateDMY && <span className="px-2 py-0.5 rounded-full bg-[var(--dark-color)] border border-[var(--border-color)] text-[9px]">{dateDMY}</span>}
+                                  </div>
+                                  <div className="flex items-center gap-1 text-[var(--text-secondary-color)] flex-wrap">
+                                    <span className={`material-symbols-outlined text-[14px] opacity-60 ${dirColor}`}>{icon}</span>
+                                    <span className="truncate max-w-[240px] sm:max-w-[260px]">{getLocationLabel(locations.find(l=> l.id===p.fromId) || { name: p.from })}</span>
+                                    <span className="material-symbols-outlined text-[14px] opacity-60">trending_flat</span>
+                                    <span className="truncate max-w-[240px] sm:max-w-[260px]">{getLocationLabel(locations.find(l=> l.id===p.toId) || { name: p.to })}</span>
+                                  </div>
                                 </div>
-                                <div className="flex items-center gap-1 text-[var(--text-secondary-color)]">
-                                  <span className={`material-symbols-outlined text-[14px] opacity-60 ${dirColor}`}>{icon}</span>
-                                  {getLocationLabel(locations.find(l=> l.id===m.fromId) || { name: m.from })}
-                                  <span className="material-symbols-outlined text-[14px] opacity-60">trending_flat</span>
-                                  {getLocationLabel(locations.find(l=> l.id===m.toId) || { name: m.to })}
+                                <div className="w-full sm:w-auto ml-0 sm:ml-auto flex flex-wrap items-center gap-2 text-[var(--text-secondary-color)]">
+                                  <span className="inline-flex items-center gap-1"><span className="material-symbols-outlined text-[14px] opacity-60">inventory_2</span>{p.items.length} {p.items.length===1? 'Producto':'Productos'}</span>
+                                  <span className="inline-flex items-center gap-1"><span className="material-symbols-outlined text-[14px] opacity-60">counter_1</span>{formatQty(anyQty)} Unidades</span>
+                                  <span className="inline-flex items-center gap-1"><span className="material-symbols-outlined text-[14px] opacity-60">schedule</span>{time12}</span>
+                                  <span className="material-symbols-outlined text-[16px] opacity-70 ml-auto sm:ml-0">{isOpen? 'expand_less':'expand_more'}</span>
                                 </div>
-                                <div className="ml-0 sm:ml-auto flex items-center gap-1 text-[var(--text-secondary-color)]">
-                                  <span className="material-symbols-outlined text-[14px] opacity-60">schedule</span>
-                                  <span className="whitespace-nowrap">{fullDate.replace(/^[a-záéíóúñ]+\s/i,'').split(', ').slice(1).join(', ')}</span>
+                              </button>
+                              {isOpen && (
+                                <div className="mt-2 p-2 rounded-md border border-[var(--border-color)] bg-[var(--card-color)]">
+                                  <div className="text-[9px] uppercase tracking-wide text-[var(--text-secondary-color)] mb-1">Productos</div>
+                                  <div className="flex flex-col divide-y divide-[var(--border-color)]">
+                                    {p.items.map((it,idx)=> (
+                                      <div key={it.id} className={`py-1.5 px-2 grid grid-cols-[1fr_auto] items-center gap-2 ${idx%2? 'bg-[var(--dark-color)]/20':''}`}>
+                                        <div className="flex items-center gap-2 min-w-0">
+                                          <span className="material-symbols-outlined text-[12px] opacity-60">inventory_2</span>
+                                          <span className="truncate max-w-[220px] sm:max-w-[420px] font-medium">{it.productName}</span>
+                                        </div>
+                                        <div className="flex items-center gap-2 justify-end text-[var(--text-secondary-color)]">
+                                          <span className="kbd">{formatQty(it.qty)}</span>
+                                          <span className="opacity-70">{formatUom(it.uom)}</span>
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                  {p.creator && <div className="mt-2 inline-flex items-center gap-1 px-2 py-0.5 rounded border border-[var(--border-color)] bg-[var(--dark-color)] text-[9px] text-[var(--text-secondary-color)]"><span className="material-symbols-outlined text-[12px] opacity-60">person</span>{p.creator}</div>}
                                 </div>
-                              </div>
-                              <div className="flex flex-wrap items-center gap-1">
-                                <span className="px-2 py-0.5 rounded border border-[var(--border-color)] bg-[var(--dark-color)] flex items-center gap-1 text-[9px] sm:text-[10px]">
-                                  <span className="material-symbols-outlined text-[12px] opacity-60">inventory_2</span>
-                                  <span className="font-semibold truncate max-w-[140px] sm:max-w-[160px]">
-                                    {m.productName}
-                                  </span>
-                                  <span className="kbd">{qtyFmt}</span>
-                                </span>
-                                {m.creator && <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-[var(--border-color)] bg-[var(--dark-color)] text-[8px] sm:text-[9px] text-[var(--text-secondary-color)]"><span className="material-symbols-outlined text-[12px] opacity-60">person</span>{m.creator}</span>}
-                              </div>
+                              )}
                             </li>
                           );
                         })}

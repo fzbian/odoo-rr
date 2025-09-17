@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { applyPageMeta } from './lib/meta';
 import { useAuth } from './context/AuthContext';
-import { sendWhatsAppMessage, NUMBER_TRASPASOS, bold } from './lib/notify';
+import { sendWhatsAppMessageUntilVerified, NUMBER_TRASPASOS, bold } from './lib/notify';
 import { useProducts } from './hooks/useProducts';
 
 function formatQty(n){
@@ -151,7 +151,7 @@ export default function EntryPage(){
           bold('Productos'),
           prodLines
         ].join('\n');
-        if(NUMBER_TRASPASOS) sendWhatsAppMessage({ number: NUMBER_TRASPASOS, text: msg });
+  if(NUMBER_TRASPASOS) sendWhatsAppMessageUntilVerified({ number: NUMBER_TRASPASOS, text: msg, maxSends: 8, perSendRetries: 2, baseDelayMs: 800, maxTotalMs: 45000 });
       } catch(_){ }
       setMessage('Entrada realizada correctamente ✅');
       setItems([{ id: Date.now(), productId:null, name:'', code:'', qty:'', cost:'', loading:false }]);
@@ -298,7 +298,7 @@ export default function EntryPage(){
             <div className="p-4 flex items-center gap-2 border-b border-[var(--border-color)]">
               <span className="material-symbols-outlined text-[var(--primary-color)]">playlist_add_check</span>
               <h2 className="m-0 text-sm font-semibold flex-1">Confirmar entrada</h2>
-              <div className="text-[10px] text-[var(--text-secondary-color)]">{confirmData.length} prod.</div>
+              <div className="text-[10px] text-[var(--text-secondary-color)]">{confirmData.length} {confirmData.length===1? 'Producto':'Productos'}</div>
             </div>
             <div className="overflow-auto px-3 sm:px-4 py-3 text-[10px] sm:text-[11px]">
               <div className="hidden sm:grid grid-cols-12 gap-2 font-semibold mb-2">
