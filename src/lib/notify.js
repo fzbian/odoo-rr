@@ -49,6 +49,20 @@ function validateInput({ chat, message }){
 export async function sendChatMessage({ chat, message, timeoutMs = 10000 }){
   const err = validateInput({ chat, message });
   if(err) return { ok:false, error: err };
+  // Protección simple anti-duplicados inmediatos: mismo chat+mensaje en < WINDOW_MS
+  const WINDOW_MS = 3000;
+  if(typeof window !== 'undefined'){
+    window.__LAST_CHAT_SENDS = window.__LAST_CHAT_SENDS || [];
+    const now = Date.now();
+    // limpiar expirados
+    window.__LAST_CHAT_SENDS = window.__LAST_CHAT_SENDS.filter(r=> (now - r.at) < WINDOW_MS);
+    const key = chat + '|' + message;
+    if(window.__LAST_CHAT_SENDS.some(r=> r.key === key)){
+      console.info('[notify] duplicado evitado', { chat, suppressed: true });
+      return { ok:false, duplicate:true, error:'duplicado_rapido' };
+    }
+    window.__LAST_CHAT_SENDS.push({ key, at: now });
+  }
   const root = baseUrl();
   if(!root) return { ok:false, error: 'REACT_APP_NOTIFY_URL no definida' };
   const url = root + 'whatsapp/send-text';
