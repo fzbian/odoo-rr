@@ -65,7 +65,20 @@ export async function sendChatMessage({ chat, message, timeoutMs = 10000 }){
   }
   const root = baseUrl();
   if(!root) return { ok:false, error: 'REACT_APP_NOTIFY_URL no definida' };
-  const url = root + 'whatsapp/send-text';
+  // Si el root ya parece apuntar directamente a un endpoint final, no concatenar.
+  // Casos manejados:
+  //  - Ya termina en whatsapp/send-text
+  //  - Es un endpoint legacy message/sendText/{alias}
+  let url;
+  if(/whatsapp\/send-text\/?$/i.test(root)) {
+    url = root; // Ya es el endpoint correcto
+  } else if(/message\/sendText\//i.test(root)) {
+    // Endpoint viejo detectado: avisar y usarlo tal cual (para no romper mientras corriges la variable)
+    console.warn('[notify] REACT_APP_NOTIFY_URL parece legacy (message/sendText). Ajusta la variable a la base nueva (ej: https://wpp-api.chinatownlogistic.com/)');
+    url = root; // No añadimos sufijo para evitar 404 doble
+  } else {
+    url = root + 'whatsapp/send-text';
+  }
   const body = JSON.stringify({ chat, message });
   try {
     console.info('[notify] enviando chat', { chat, len: message.length, url });
