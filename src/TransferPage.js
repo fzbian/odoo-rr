@@ -5,7 +5,7 @@ import { createInternalTransfer } from './lib/transfers';
 import { useAuth } from './context/AuthContext';
 import './index.css';
 import './App.css';
-import { sendWhatsAppMessageUntilVerified, NUMBER_TRASPASOS, bold } from './lib/notify';
+import { sendChatMessage, CHAT_TRASPASOS, bold } from './lib/notify';
 import SessionBanner from './components/SessionBanner';
 import { parseOdooDate, formatDateTime } from './utils/dates';
 
@@ -390,10 +390,8 @@ export default function TransferPage() {
           bold('Productos'),
           linesTxt
         ].join('\n');
-        if(NUMBER_TRASPASOS) {
-          // No bloquear el flujo de la UI: ejecutar en segundo plano
-          sendWhatsAppMessageUntilVerified({ number: NUMBER_TRASPASOS, text: msg, maxSends: 8, perSendRetries: 2, baseDelayMs: 800, maxTotalMs: 45000 });
-        }
+        // Enviar notificación al chat de traspasos (no bloqueante)
+        sendChatMessage({ chat: CHAT_TRASPASOS, message: msg });
       } catch(_){ /* ignorar */ }
       if (res.warning) setInfo(res.warning);
       // Reset de selección y líneas para nuevo traspaso

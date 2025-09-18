@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { applyPageMeta } from './lib/meta';
 import { useAuth } from './context/AuthContext';
-import { sendWhatsAppMessageUntilVerified, NUMBER_TRASPASOS, bold } from './lib/notify';
+import { sendChatMessage, CHAT_TRASPASOS, bold } from './lib/notify';
 import { useProducts } from './hooks/useProducts';
 
 function formatQty(n){
@@ -151,7 +151,7 @@ export default function EntryPage(){
           bold('Productos'),
           prodLines
         ].join('\n');
-  if(NUMBER_TRASPASOS) sendWhatsAppMessageUntilVerified({ number: NUMBER_TRASPASOS, text: msg, maxSends: 8, perSendRetries: 2, baseDelayMs: 800, maxTotalMs: 45000 });
+  sendChatMessage({ chat: CHAT_TRASPASOS, message: msg });
       } catch(_){ }
       setMessage('Entrada realizada correctamente ✅');
       setItems([{ id: Date.now(), productId:null, name:'', code:'', qty:'', cost:'', loading:false }]);
