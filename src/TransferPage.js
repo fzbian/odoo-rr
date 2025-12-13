@@ -412,7 +412,7 @@ export default function TransferPage() {
     setLoadingMovements(true);
     try {
       // Dominio dinámico
-      const domain = [['picking_id.picking_type_id.code','=','internal']];
+      const domain = [['picking_id.picking_type_id.code','=','internal'], ['state','=','done']];
       if(mvOrigin) domain.push(['location_id','=', Number(mvOrigin)]);
       if(mvDest) domain.push(['location_dest_id','=', Number(mvDest)]);
       if(mvProductId) domain.push(['product_id','=', mvProductId]);
@@ -475,7 +475,7 @@ export default function TransferPage() {
       let fullLines = lines;
       if (mvProductId && pickingIds.length) {
         try {
-          const all = await executeKwSilent({ model:'stock.move.line', method:'search_read', params:[[ ['picking_id','in', pickingIds] ], fields], kwargs:{ limit: 5000 } });
+          const all = await executeKwSilent({ model:'stock.move.line', method:'search_read', params:[[ ['picking_id','in', pickingIds], ['state','=','done'] ], fields], kwargs:{ limit: 5000 } });
           all.sort((a,b)=> (a.date>b.date? -1: a.date<b.date? 1: 0));
           fullLines = all;
         } catch(_) { /* mantener lines si falla */ }

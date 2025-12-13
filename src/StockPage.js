@@ -190,10 +190,10 @@ export default function StockPage(){
       let domain;
       if(selectedLoc === 'ALL') {
         if(!allValidInternalIds.length) return null;
-        domain = ['&','&',['product_id','=', productId], ['date','>=', startStr], ['date','<=', endStr], '|', ['location_id','in', allValidInternalIds], ['location_dest_id','in', allValidInternalIds]];
+        domain = ['&','&','&','&', ['product_id','=', productId], ['date','>=', startStr], ['date','<=', endStr], ['state','=','done'], '|', ['location_id','in', allValidInternalIds], ['location_dest_id','in', allValidInternalIds]];
       } else {
         const locId = Number(selectedLoc);
-        domain = ['&','&',['product_id','=', productId], ['date','>=', startStr], ['date','<=', endStr], '|', ['location_id','=', locId], ['location_dest_id','=', locId]];
+        domain = ['&','&','&','&', ['product_id','=', productId], ['date','>=', startStr], ['date','<=', endStr], ['state','=','done'], '|', ['location_id','=', locId], ['location_dest_id','=', locId]];
       }
       const fields = ['date','qty_done','product_uom_id','location_id','location_dest_id','reference','picking_id'];
       const periodLines = await executeKw({ model:'stock.move.line', method:'search_read', params:[domain, fields], kwargs:{ limit: 1200, order: 'date asc' }, activity:'Movimientos periodo...' });
@@ -242,10 +242,10 @@ export default function StockPage(){
         const nowStr = nowDate.toISOString().slice(0,19).replace('T',' ');
         let afterDomain;
         if(selectedLoc === 'ALL') {
-          afterDomain = ['&','&',['product_id','=', productId], ['date','>=', endPlusStr], ['date','<=', nowStr], '|', ['location_id','in', allValidInternalIds], ['location_dest_id','in', allValidInternalIds]];
+          afterDomain = ['&','&','&','&', ['product_id','=', productId], ['date','>=', endPlusStr], ['date','<=', nowStr], ['state','=','done'], '|', ['location_id','in', allValidInternalIds], ['location_dest_id','in', allValidInternalIds]];
         } else {
           const locId = Number(selectedLoc);
-          afterDomain = ['&','&',['product_id','=', productId], ['date','>=', endPlusStr], ['date','<=', nowStr], '|', ['location_id','=', locId], ['location_dest_id','=', locId]];
+          afterDomain = ['&','&','&','&', ['product_id','=', productId], ['date','>=', endPlusStr], ['date','<=', nowStr], ['state','=','done'], '|', ['location_id','=', locId], ['location_dest_id','=', locId]];
         }
         const futureLines = await executeKw({ model:'stock.move.line', method:'search_read', params:[afterDomain, fields], kwargs:{ limit: 2000, order: 'date asc' }, activity:'Movimientos posteriores...' });
         let netFuture = 0;
