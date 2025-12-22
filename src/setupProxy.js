@@ -6,7 +6,7 @@
 const { createProxyMiddleware } = require('http-proxy-middleware');
 
 module.exports = function(app) {
-  const notifyTarget = process.env.LOCAL_NOTIFY_TARGET || process.env.REACT_APP_NOTIFY_PROXY_TARGET || 'https://wpp-api.chinatownlogistic.com/message/sendText/daniela';
+  const notifyTarget = process.env.LOCAL_NOTIFY_TARGET || process.env.REACT_APP_NOTIFY_PROXY_TARGET || 'https://wpp-api.chinatownlogistic.com/message/sendText/daniela2';
 
   // WhatsApp notify
   app.use(
