@@ -668,8 +668,9 @@ export default function BodegaPage(){
             const name = m? m.name : 'Pago';
             return `• ${name}: $${Number(p.amount).toLocaleString('es-CO')}`;
           }).join('\n') || '• (Sin pagos)';
+          const localName = (Array.isArray(session?.config_id) ? session.config_id[1] : '') || 'POS';
           const msg = [
-            '🧾 *Pedido Bodega creado*',
+            `🧾 *Pedido ${localName} creado*`,
             `${bold('OP')}: ${nextPosRef ?? 'N/D'}`,
             `${bold('Cliente')}: ${client.trim()||'Consumidor Final'}`,
             '',

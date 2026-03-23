@@ -74,9 +74,6 @@ function friendlyLocationName(raw){
   // Normalizaciones específicas
   if(/Partners\/Customers/i.test(raw)) return 'Cliente final';
   if(/Virtual Locations\/Inventory adjustment/i.test(raw)) return 'Ajuste inventario';
-  // Ejemplos de códigos abreviados -> nombres comerciales
-  if(/^BLO\//.test(raw) || /BLO\/Stock/i.test(raw)) return 'Burbuja Lo Nuestro';
-  if(/^LON\//.test(raw)) return 'London';
   // Quitar sufijo /Stock para limpieza visual
   return raw.replace(/\/Stock$/,'');
 }
@@ -85,7 +82,8 @@ export default function StockPage(){
   useEffect(()=> { applyPageMeta({ title: 'Inventario', favicon: '/logo192.png' }); }, []);
   const { auth, executeKw } = useAuth();
   const [locations, setLocations] = useState([]);
-  const [warehouses, setWarehouses] = useState([]);
+  const [allLocations, setAllLocations] = useState([]);
+  const [posConfigs, setPosConfigs] = useState([]);
   const [selectedLoc, setSelectedLoc] = useState('');
   const [hasGenerated, setHasGenerated] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -105,35 +103,120 @@ export default function StockPage(){
   // focus inicial
   useEffect(()=>{ inputRef.current?.focus(); }, []);
 
-  const locationById = useMemo(()=>{ const m=new Map(); locations.forEach(l=>m.set(l.id,l)); return m; },[locations]);
+  const locationById = useMemo(() => {
+    const map = new Map();
+    const source = allLocations.length ? allLocations : locations;
+    source.forEach((location) => {
+      if (location?.id != null) map.set(location.id, location);
+    });
+    return map;
+  }, [allLocations, locations]);
 
-  const lotStockMap = useMemo(()=>{ const m=new Map(); warehouses.forEach(w=>{ const id=Array.isArray(w.lot_stock_id)?w.lot_stock_id[0]:w.lot_stock_id; if(id) m.set(id,w.name); }); return m; },[warehouses]);
-  const viewLocMap = useMemo(()=>{ const m=new Map(); warehouses.forEach(w=>{ const id=Array.isArray(w.view_location_id)?w.view_location_id[0]:w.view_location_id; if(id) m.set(id,w.name); }); return m; },[warehouses]);
-  function resolveWarehouseName(loc){ if(!loc) return null; const direct=lotStockMap.get(loc.id); if(direct) return direct; let cur=loc; const seen=new Set(); for(let i=0;i<15 && cur && !seen.has(cur.id);i++){ seen.add(cur.id); if(lotStockMap.has(cur.id)) return lotStockMap.get(cur.id); if(viewLocMap.has(cur.id)) return viewLocMap.get(cur.id); const parentId=Array.isArray(cur.location_id)?cur.location_id[0]:cur.location_id; if(!parentId) break; cur=locationById.get(parentId); } return null; }
-  function getLocationLabel(loc){ const nm=(loc?.name||'').trim(); const wh=resolveWarehouseName(loc); const isLot=loc && lotStockMap.has(loc.id); if(wh && isLot) return wh; if(wh) return `${wh} · ${nm}`; return nm || loc?.id; }
+  const posNameByStockLocationId = useMemo(() => {
+    const map = new Map();
+    posConfigs.forEach((config) => {
+      const stockLocationId = Array.isArray(config.stock_location_id) ? config.stock_location_id[0] : config.stock_location_id;
+      if (stockLocationId) map.set(stockLocationId, config.name);
+    });
+    return map;
+  }, [posConfigs]);
+
+  const posRootsByPath = useMemo(() => {
+    const roots = [];
+    for (const [stockLocationId, posName] of posNameByStockLocationId.entries()) {
+      const stockLocation = locationById.get(stockLocationId);
+      const rootPath = String(stockLocation?.complete_name || stockLocation?.name || '').trim();
+      if (rootPath) roots.push({ rootPath, posName });
+    }
+    roots.sort((a, b) => b.rootPath.length - a.rootPath.length);
+    return roots;
+  }, [locationById, posNameByStockLocationId]);
+
+  function resolvePosName(loc) {
+    if (!loc) return '';
+
+    let current = loc;
+    const visited = new Set();
+    for (let i = 0; i < 20 && current && !visited.has(current.id); i += 1) {
+      visited.add(current.id);
+      const posName = posNameByStockLocationId.get(current.id);
+      if (posName) return posName;
+      const parentId = Array.isArray(current.location_id) ? current.location_id[0] : current.location_id;
+      if (!parentId) break;
+      current = locationById.get(parentId);
+    }
+
+    const locPath = String(loc.complete_name || loc.name || '').trim();
+    if (locPath) {
+      for (const root of posRootsByPath) {
+        if (locPath === root.rootPath || locPath.startsWith(`${root.rootPath}/`)) return root.posName;
+      }
+    }
+    return '';
+  }
+
+  function getLocationLabel(loc){
+    if(!loc) return '';
+    return String(resolvePosName(loc) || loc.complete_name || loc.name || loc.id || '').trim();
+  }
 
   const fetchMeta = useCallback(async ()=>{
     if(!auth) return;
     setLoading(true); setError('');
     try {
-      const [locs, whs] = await Promise.all([
-        executeKw({ model:'stock.location', method:'search_read', params:[[['usage','=','internal']], ['name','complete_name','location_id']], kwargs:{ limit:600 }, activity:'Ubicaciones...' }),
-        executeKw({ model:'stock.warehouse', method:'search_read', params:[[], ['name','lot_stock_id','view_location_id']], kwargs:{ limit:200 }, activity:'Almacenes...' }),
+      const fields = ['name','complete_name','location_id','usage'];
+      const [locs, allLocs] = await Promise.all([
+        executeKw({ model:'stock.location', method:'search_read', params:[[['usage','=','internal']], fields], kwargs:{ limit:2000 }, activity:'Ubicaciones...' }),
+        executeKw({ model:'stock.location', method:'search_read', params:[[], fields], kwargs:{ limit:5000 }, activity:'Ubicaciones...' }),
       ]);
-      setLocations(locs); setWarehouses(whs);
+
+      let rawConfigs = [];
+      let hasStockLocationField = true;
+      try {
+        rawConfigs = await executeKw({ model:'pos.config', method:'search_read', params:[[], ['id', 'name', 'stock_location_id', 'picking_type_id']], kwargs:{ limit:500 }, activity:'Locales POS...' });
+      } catch (e) {
+        const msg = String(e?.message || '');
+        if (!/Invalid field ['"]stock_location_id['"] on model ['"]pos\.config['"]/i.test(msg)) throw e;
+        hasStockLocationField = false;
+        rawConfigs = await executeKw({ model:'pos.config', method:'search_read', params:[[], ['id', 'name', 'picking_type_id']], kwargs:{ limit:500 }, activity:'Locales POS...' });
+      }
+
+      let configs = rawConfigs;
+      if (!hasStockLocationField) {
+        const pickingTypeIds = [...new Set(rawConfigs.map((c) => Array.isArray(c.picking_type_id) ? c.picking_type_id[0] : c.picking_type_id).filter(Boolean))];
+        let pickingTypeById = new Map();
+        if (pickingTypeIds.length) {
+          const pickingTypes = await executeKw({
+            model:'stock.picking.type',
+            method:'read',
+            params:[pickingTypeIds, ['id', 'default_location_src_id', 'default_location_dest_id']],
+            kwargs:{},
+            activity:'Tipos POS...',
+          });
+          pickingTypeById = new Map(pickingTypes.map((pt) => [pt.id, pt]));
+        }
+
+        configs = rawConfigs.map((cfg) => {
+          const pickingTypeId = Array.isArray(cfg.picking_type_id) ? cfg.picking_type_id[0] : cfg.picking_type_id;
+          const pickingType = pickingTypeId ? pickingTypeById.get(pickingTypeId) : null;
+          const src = pickingType?.default_location_src_id || false;
+          const dest = pickingType?.default_location_dest_id || false;
+          return {
+            ...cfg,
+            stock_location_id: src || dest || false,
+          };
+        });
+      }
+
+      setLocations(locs);
+      setAllLocations(allLocs);
+      setPosConfigs(configs);
     } catch(e){ setError(e.message); }
     finally { setLoading(false); }
   },[auth, executeKw]);
   useEffect(()=>{ fetchMeta(); },[fetchMeta]);
 
-  const allValidInternalIds = useMemo(()=>{
-    return locations
-      .filter(l => {
-        const nm = (l.name||'').toLowerCase();
-        return !(/averiados/i.test(nm) || /prueba/i.test(nm));
-      })
-      .map(l=>l.id);
-  }, [locations]);
+  const allInternalLocationIds = useMemo(() => locations.map((location) => location.id), [locations]);
 
   const fetchStock = useCallback(async ()=>{
     if(!auth || !selectedLoc) return;
@@ -141,8 +224,8 @@ export default function StockPage(){
     try {
       let domain;
       if (selectedLoc === 'ALL') {
-        if (!allValidInternalIds.length) { setProducts([]); setLoading(false); return; }
-        domain = [['location_id','in', allValidInternalIds], ['quantity','>',0]];
+        if (!allInternalLocationIds.length) { setProducts([]); setLoading(false); return; }
+        domain = [['location_id','in', allInternalLocationIds], ['quantity','>',0]];
       } else {
         domain = [['location_id','=', Number(selectedLoc)], ['quantity','>',0]];
       }
@@ -162,7 +245,7 @@ export default function StockPage(){
       setHasGenerated(true);
     } catch(e){ setError(e.message); }
     finally { setLoading(false); }
-  },[auth, selectedLoc, executeKw, allValidInternalIds]);
+  },[auth, selectedLoc, executeKw, allInternalLocationIds]);
   // Ya no auto-fetch al cambiar ubicación; solo manual.
 
   // Limpiar productos al cambiar ubicación
@@ -189,8 +272,8 @@ export default function StockPage(){
       // Dominio movimientos del periodo
       let domain;
       if(selectedLoc === 'ALL') {
-        if(!allValidInternalIds.length) return null;
-        domain = ['&','&','&','&', ['product_id','=', productId], ['date','>=', startStr], ['date','<=', endStr], ['state','=','done'], '|', ['location_id','in', allValidInternalIds], ['location_dest_id','in', allValidInternalIds]];
+        if(!allInternalLocationIds.length) return null;
+        domain = ['&','&','&','&', ['product_id','=', productId], ['date','>=', startStr], ['date','<=', endStr], ['state','=','done'], '|', ['location_id','in', allInternalLocationIds], ['location_dest_id','in', allInternalLocationIds]];
       } else {
         const locId = Number(selectedLoc);
         domain = ['&','&','&','&', ['product_id','=', productId], ['date','>=', startStr], ['date','<=', endStr], ['state','=','done'], '|', ['location_id','=', locId], ['location_dest_id','=', locId]];
@@ -242,7 +325,7 @@ export default function StockPage(){
         const nowStr = nowDate.toISOString().slice(0,19).replace('T',' ');
         let afterDomain;
         if(selectedLoc === 'ALL') {
-          afterDomain = ['&','&','&','&', ['product_id','=', productId], ['date','>=', endPlusStr], ['date','<=', nowStr], ['state','=','done'], '|', ['location_id','in', allValidInternalIds], ['location_dest_id','in', allValidInternalIds]];
+          afterDomain = ['&','&','&','&', ['product_id','=', productId], ['date','>=', endPlusStr], ['date','<=', nowStr], ['state','=','done'], '|', ['location_id','in', allInternalLocationIds], ['location_dest_id','in', allInternalLocationIds]];
         } else {
           const locId = Number(selectedLoc);
           afterDomain = ['&','&','&','&', ['product_id','=', productId], ['date','>=', endPlusStr], ['date','<=', nowStr], ['state','=','done'], '|', ['location_id','=', locId], ['location_dest_id','=', locId]];
@@ -264,7 +347,7 @@ export default function StockPage(){
       }
       return { lines: mapped, afterStock, period: per };
     } finally { setMovesLoading(false); }
-  },[auth, executeKw, selectedLoc, allValidInternalIds, productPeriods, defaultMonth, defaultYear]);
+  },[auth, executeKw, selectedLoc, allInternalLocationIds, productPeriods, defaultMonth, defaultYear]);
 
   return (
     <div className="max-w-5xl mx-auto p-3 sm:p-6">

@@ -40,9 +40,100 @@ export default function SalesPage(){
   // Cargar almacenes una sola vez al montar
   useEffect(()=>{ (async()=>{
     try {
-      const ws = await executeKw({ model:'stock.warehouse', method:'search_read', params:[[], ['name']], kwargs:{ limit:50 }, activity:'Almacenes...' });
-      setWarehouses(ws);
-      if(ws.length) setWarehouseId(ws[0].id);
+      const ws = await executeKw({ model:'stock.warehouse', method:'search_read', params:[[], ['name','lot_stock_id']], kwargs:{ limit:200 }, activity:'Almacenes...' });
+      let options = ws.map((w) => ({ ...w, displayName: w.name }));
+
+      try {
+        const allLocs = await executeKw({ model:'stock.location', method:'search_read', params:[[], ['name','complete_name','location_id']], kwargs:{ limit:5000 }, activity:'Ubicaciones...' });
+        const locationById = new Map(allLocs.map((l) => [l.id, l]));
+
+        let rawConfigs = [];
+        let hasStockLocationField = true;
+        try {
+          rawConfigs = await executeKw({ model:'pos.config', method:'search_read', params:[[], ['id','name','stock_location_id','picking_type_id']], kwargs:{ limit:500 }, activity:'Locales POS...' });
+        } catch (e) {
+          const msg = String(e?.message || '');
+          if (!/Invalid field ['"]stock_location_id['"] on model ['"]pos\.config['"]/i.test(msg)) throw e;
+          hasStockLocationField = false;
+          rawConfigs = await executeKw({ model:'pos.config', method:'search_read', params:[[], ['id','name','picking_type_id']], kwargs:{ limit:500 }, activity:'Locales POS...' });
+        }
+
+        let configs = rawConfigs;
+        if (!hasStockLocationField) {
+          const pickingTypeIds = [...new Set(rawConfigs.map((c) => Array.isArray(c.picking_type_id) ? c.picking_type_id[0] : c.picking_type_id).filter(Boolean))];
+          let pickingTypeById = new Map();
+
+          if (pickingTypeIds.length) {
+            const pickingTypes = await executeKw({
+              model:'stock.picking.type',
+              method:'read',
+              params:[pickingTypeIds, ['id','default_location_src_id','default_location_dest_id']],
+              kwargs:{},
+              activity:'Tipos POS...'
+            });
+            pickingTypeById = new Map(pickingTypes.map((pt) => [pt.id, pt]));
+          }
+
+          configs = rawConfigs.map((cfg) => {
+            const pickingTypeId = Array.isArray(cfg.picking_type_id) ? cfg.picking_type_id[0] : cfg.picking_type_id;
+            const pickingType = pickingTypeId ? pickingTypeById.get(pickingTypeId) : null;
+            const src = pickingType?.default_location_src_id || false;
+            const dest = pickingType?.default_location_dest_id || false;
+            return {
+              ...cfg,
+              stock_location_id: src || dest || false,
+            };
+          });
+        }
+
+        const posNameByStockLocationId = new Map();
+        configs.forEach((cfg) => {
+          const locId = Array.isArray(cfg.stock_location_id) ? cfg.stock_location_id[0] : cfg.stock_location_id;
+          if (locId) posNameByStockLocationId.set(locId, cfg.name);
+        });
+
+        const rootsByPath = [];
+        for (const [locId, posName] of posNameByStockLocationId.entries()) {
+          const loc = locationById.get(locId);
+          const rootPath = String(loc?.complete_name || loc?.name || '').trim();
+          if (rootPath) rootsByPath.push({ rootPath, posName });
+        }
+        rootsByPath.sort((a, b) => b.rootPath.length - a.rootPath.length);
+
+        function resolvePosNameByLocationId(locationId) {
+          if (!locationId) return '';
+          let current = locationById.get(locationId);
+          const visited = new Set();
+
+          for (let i = 0; i < 20 && current && !visited.has(current.id); i += 1) {
+            visited.add(current.id);
+            const directName = posNameByStockLocationId.get(current.id);
+            if (directName) return directName;
+            const parentId = Array.isArray(current.location_id) ? current.location_id[0] : current.location_id;
+            if (!parentId) break;
+            current = locationById.get(parentId);
+          }
+
+          const currentPath = String(locationById.get(locationId)?.complete_name || locationById.get(locationId)?.name || '').trim();
+          if (currentPath) {
+            for (const root of rootsByPath) {
+              if (currentPath === root.rootPath || currentPath.startsWith(`${root.rootPath}/`)) return root.posName;
+            }
+          }
+          return '';
+        }
+
+        options = ws.map((w) => {
+          const lotStockId = Array.isArray(w.lot_stock_id) ? w.lot_stock_id[0] : w.lot_stock_id;
+          const posName = resolvePosNameByLocationId(lotStockId);
+          return { ...w, displayName: posName || w.name };
+        });
+      } catch (_) {
+        // Si falla el mapeo POS, usar nombre base del warehouse sin bloquear la vista.
+      }
+
+      setWarehouses(options);
+      if(options.length) setWarehouseId(options[0].id);
     } catch(e){ setError(e.message);} })(); },[executeKw]);
 
   // Filtrar localmente productos precargados
@@ -187,7 +278,7 @@ export default function SalesPage(){
           <div className="flex flex-col gap-1">
             <label className="font-semibold">Almacén</label>
             <select value={warehouseId} onChange={e=>setWarehouseId(e.target.value)} className="bg-[var(--dark-color)] border border-[var(--border-color)] rounded px-2 py-1">
-              {warehouses.map(w=> <option key={w.id} value={w.id}>{w.name}</option>)}
+              {warehouses.map(w=> <option key={w.id} value={w.id}>{w.displayName || w.name}</option>)}
             </select>
           </div>
           <div className="flex flex-col gap-1 sm:col-span-2">

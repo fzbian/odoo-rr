@@ -200,7 +200,8 @@ export default function TransferPage() {
   const [expandedPick, setExpandedPick] = useState(null); // id picking expandido
   const [loadingMovements, setLoadingMovements] = useState(false);
   const [locations, setLocations] = useState([]);
-  const [warehouses, setWarehouses] = useState([]);
+  const [allLocations, setAllLocations] = useState([]);
+  const [posConfigs, setPosConfigs] = useState([]);
   const [origin, setOrigin] = useState('');
   const [dest, setDest] = useState('');
   function newLine(){
@@ -221,59 +222,65 @@ export default function TransferPage() {
   // Clave para dependencias de productos (evita expresión compleja en useEffect)
   const productIdsKey = useMemo(() => lines.map(l => l.productId || '').join(','), [lines]);
 
-  // Construye mapas para resolver el nombre del almacén correspondiente a una ubicación
   const locationById = useMemo(() => {
-    const m = new Map();
-    locations.forEach(l => m.set(l.id, l));
-    return m;
-  }, [locations]);
-
-  const lotStockMap = useMemo(() => {
-    const m = new Map(); // location_id -> warehouse.name
-    warehouses.forEach(w => {
-      const locId = Array.isArray(w.lot_stock_id) ? w.lot_stock_id[0] : w.lot_stock_id;
-      if (locId) m.set(locId, w.name);
+    const map = new Map();
+    const source = allLocations.length ? allLocations : locations;
+    source.forEach((location) => {
+      if (location?.id != null) map.set(location.id, location);
     });
-    return m;
-  }, [warehouses]);
+    return map;
+  }, [allLocations, locations]);
 
-  const viewLocMap = useMemo(() => {
-    const m = new Map(); // view_location_id -> warehouse.name
-    warehouses.forEach(w => {
-      const vId = Array.isArray(w.view_location_id) ? w.view_location_id[0] : w.view_location_id;
-      if (vId) m.set(vId, w.name);
+  const posNameByStockLocationId = useMemo(() => {
+    const map = new Map();
+    posConfigs.forEach((config) => {
+      const stockLocationId = Array.isArray(config.stock_location_id) ? config.stock_location_id[0] : config.stock_location_id;
+      if (stockLocationId) map.set(stockLocationId, config.name);
     });
-    return m;
-  }, [warehouses]);
+    return map;
+  }, [posConfigs]);
 
-  function resolveWarehouseName(loc) {
-    if (!loc) return null;
-    // Direct match con lot_stock_id
-    const direct = lotStockMap.get(loc.id);
-    if (direct) return direct;
-    // Recorrer padres hasta encontrar un lot_stock_id o view_location_id
-    const visited = new Set();
-    let cur = loc;
-    for (let i = 0; i < 20 && cur && !visited.has(cur.id); i++) {
-      visited.add(cur.id);
-      const curId = cur.id;
-      if (lotStockMap.has(curId)) return lotStockMap.get(curId);
-      if (viewLocMap.has(curId)) return viewLocMap.get(curId);
-      const parentId = Array.isArray(cur.location_id) ? cur.location_id[0] : cur.location_id;
-      if (!parentId) break;
-      cur = locationById.get(parentId);
+  const posRootsByPath = useMemo(() => {
+    const roots = [];
+    for (const [stockLocationId, posName] of posNameByStockLocationId.entries()) {
+      const stockLocation = locationById.get(stockLocationId);
+      const rootPath = String(stockLocation?.complete_name || stockLocation?.name || '').trim();
+      if (rootPath) roots.push({ rootPath, posName });
     }
-    return null;
+    roots.sort((a, b) => b.rootPath.length - a.rootPath.length);
+    return roots;
+  }, [locationById, posNameByStockLocationId]);
+
+  function resolvePosName(loc) {
+    if (!loc) return '';
+
+    let current = loc;
+    const visited = new Set();
+
+    for (let i = 0; i < 20 && current && !visited.has(current.id); i += 1) {
+      visited.add(current.id);
+
+      const posName = posNameByStockLocationId.get(current.id);
+      if (posName) return posName;
+
+      const parentId = Array.isArray(current.location_id) ? current.location_id[0] : current.location_id;
+      if (!parentId) break;
+      current = locationById.get(parentId);
+    }
+
+    const locPath = String(loc.complete_name || loc.name || '').trim();
+    if (locPath) {
+      for (const root of posRootsByPath) {
+        if (locPath === root.rootPath || locPath.startsWith(`${root.rootPath}/`)) return root.posName;
+      }
+    }
+
+    return '';
   }
 
   function getLocationLabel(loc) {
-    const nm = (loc?.name || '').trim();
-    const whName = resolveWarehouseName(loc);
-    // Si la ubicación es el Stock principal del almacén, mostrar solo el nombre del punto
-    const isLotStock = loc && lotStockMap.has(loc.id);
-    if (whName && isLotStock) return whName;
-    if (whName) return `${whName} · ${nm || loc?.id}`;
-    return nm || String(loc?.id || '');
+    if (!loc) return '';
+    return String(resolvePosName(loc) || loc.complete_name || loc.name || loc.id || '').trim();
   }
 
   // Eliminada búsqueda remota por tecla: se usa hook de productos precargados
@@ -286,14 +293,55 @@ export default function TransferPage() {
     let cancelled = false;
     try {
       const domain = [["usage","=","internal"]];
-      const fields = ["name", "complete_name", "location_id"];
-      const [locs, whs] = await Promise.all([
-        executeKwSilent({ model: 'stock.location', method: 'search_read', params: [domain, fields], kwargs: { limit: 500 } }),
-        executeKwSilent({ model: 'stock.warehouse', method: 'search_read', params: [[], ["name","lot_stock_id","view_location_id"]], kwargs: { limit: 200 } }),
+      const fields = ["name", "complete_name", "location_id", "usage"];
+      const [locs, allLocs] = await Promise.all([
+        executeKwSilent({ model: 'stock.location', method: 'search_read', params: [domain, fields], kwargs: { limit: 2000 } }),
+        executeKwSilent({ model: 'stock.location', method: 'search_read', params: [[], fields], kwargs: { limit: 5000 } }),
       ]);
+
+      let rawConfigs = [];
+      let hasStockLocationField = true;
+      try {
+        rawConfigs = await executeKwSilent({ model: 'pos.config', method: 'search_read', params: [[], ['id', 'name', 'stock_location_id', 'picking_type_id']], kwargs: { limit: 500 } });
+      } catch (e) {
+        const msg = String(e?.message || '');
+        if (!/Invalid field ['"]stock_location_id['"] on model ['"]pos\.config['"]/i.test(msg)) throw e;
+        hasStockLocationField = false;
+        rawConfigs = await executeKwSilent({ model: 'pos.config', method: 'search_read', params: [[], ['id', 'name', 'picking_type_id']], kwargs: { limit: 500 } });
+      }
+
+      let configs = rawConfigs;
+      if (!hasStockLocationField) {
+        const pickingTypeIds = [...new Set(rawConfigs.map((c) => Array.isArray(c.picking_type_id) ? c.picking_type_id[0] : c.picking_type_id).filter(Boolean))];
+        let pickingTypeById = new Map();
+
+        if (pickingTypeIds.length) {
+          const pickingTypes = await executeKwSilent({
+            model: 'stock.picking.type',
+            method: 'read',
+            params: [pickingTypeIds, ['id', 'default_location_src_id', 'default_location_dest_id']],
+            kwargs: {},
+          });
+          pickingTypeById = new Map(pickingTypes.map((pt) => [pt.id, pt]));
+        }
+
+        configs = rawConfigs.map((cfg) => {
+          const pickingTypeId = Array.isArray(cfg.picking_type_id) ? cfg.picking_type_id[0] : cfg.picking_type_id;
+          const pickingType = pickingTypeId ? pickingTypeById.get(pickingTypeId) : null;
+          const src = pickingType?.default_location_src_id || false;
+          const dest = pickingType?.default_location_dest_id || false;
+          return {
+            ...cfg,
+            // Homologamos estructura para reutilizar el resto del flujo
+            stock_location_id: src || dest || false,
+          };
+        });
+      }
+
       if (cancelled) return;
       setLocations(locs);
-      setWarehouses(whs);
+      setAllLocations(allLocs);
+      setPosConfigs(configs);
     } catch (e) {
       if (!cancelled) setLoadError(e.message);
     } finally {
@@ -365,8 +413,8 @@ export default function TransferPage() {
       // Enriquecer resultado con resumen de líneas (antes / después)
       const enriched = {
         ...res,
-        originLabel: originLoc ? getLocationLabel(originLoc) : origin,
-        destLabel: destLoc ? getLocationLabel(destLoc) : dest,
+        originLabel: originLoc ? getLocationLabel(locationById.get(originLoc.id) || originLoc) : origin,
+        destLabel: destLoc ? getLocationLabel(locationById.get(destLoc.id) || destLoc) : dest,
         lines: lines.filter(l=>l.productId).map(l=>({
           productId: l.productId,
           name: l.name,
@@ -462,14 +510,7 @@ export default function TransferPage() {
           creator: extractCreator(note)
         };
       });
-      const isExcludedLocation = (s)=> {
-        const t = String(s||'').trim().toLowerCase();
-        if(!t) return false;
-        // Excluir si menciona el nombre de almacén 'Prueba' o el código/ruta 'PRB/Stock'
-        return t.includes('prueba') || t.startsWith('prb/') || t === 'prb' || t === 'prb/stock' || t.endsWith('/prueba');
-      };
-      const mappedFiltered = mapped.filter(l=> !isExcludedLocation(l.from) && !isExcludedLocation(l.to));
-      setMovementLines(mappedFiltered);
+      setMovementLines(mapped);
 
       // Construir agrupación por picking. Si se filtró por producto, traer todas las líneas de esos pickings.
       let fullLines = lines;
@@ -500,9 +541,8 @@ export default function TransferPage() {
           creator: extractCreator(note)
         };
       });
-  const mappedFullFiltered = mappedFull.filter(ml => !isExcludedLocation(ml.from) && !isExcludedLocation(ml.to));
       const pmap = new Map();
-      for (const ml of mappedFullFiltered) {
+      for (const ml of mappedFull) {
         const key = ml.pickId || `ref:${ml.ref}:${ml.date?.slice(0,10)||''}`;
         if(!pmap.has(key)){
           pmap.set(key, {
@@ -912,9 +952,9 @@ export default function TransferPage() {
                                   </div>
                                   <div className="flex items-center gap-1 text-[var(--text-secondary-color)] flex-wrap">
                                     <span className={`material-symbols-outlined text-[14px] opacity-60 ${dirColor}`}>{icon}</span>
-                                    <span className="truncate max-w-[240px] sm:max-w-[260px]">{getLocationLabel(locations.find(l=> l.id===p.fromId) || { name: p.from })}</span>
+                                    <span className="truncate max-w-[240px] sm:max-w-[260px]">{getLocationLabel(locationById.get(p.fromId) || { name: p.from })}</span>
                                     <span className="material-symbols-outlined text-[14px] opacity-60">trending_flat</span>
-                                    <span className="truncate max-w-[240px] sm:max-w-[260px]">{getLocationLabel(locations.find(l=> l.id===p.toId) || { name: p.to })}</span>
+                                    <span className="truncate max-w-[240px] sm:max-w-[260px]">{getLocationLabel(locationById.get(p.toId) || { name: p.to })}</span>
                                   </div>
                                 </div>
                                 <div className="w-full sm:w-auto ml-0 sm:ml-auto flex flex-wrap items-center gap-2 text-[var(--text-secondary-color)]">

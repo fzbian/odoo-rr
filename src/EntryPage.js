@@ -11,6 +11,99 @@ function formatQty(n){
   return new Intl.NumberFormat('es-ES',{minimumFractionDigits:0, maximumFractionDigits:isInt?0:2}).format(v);
 }
 
+async function resolvePosNameForLocation(executeKw, locationId){
+  if(!locationId) return '';
+
+  const allLocs = await executeKw({
+    model:'stock.location',
+    method:'search_read',
+    params:[[], ['name','complete_name','location_id']],
+    kwargs:{ limit:5000 },
+    activity:'Ubicaciones...'
+  });
+  const locationById = new Map(allLocs.map((l)=> [l.id, l]));
+
+  let rawConfigs = [];
+  let hasStockLocationField = true;
+  try {
+    rawConfigs = await executeKw({
+      model:'pos.config',
+      method:'search_read',
+      params:[[], ['id','name','stock_location_id','picking_type_id']],
+      kwargs:{ limit:500 },
+      activity:'Locales POS...'
+    });
+  } catch (e) {
+    const msg = String(e?.message || '');
+    if(!/Invalid field ['"]stock_location_id['"] on model ['"]pos\.config['"]/i.test(msg)) throw e;
+    hasStockLocationField = false;
+    rawConfigs = await executeKw({
+      model:'pos.config',
+      method:'search_read',
+      params:[[], ['id','name','picking_type_id']],
+      kwargs:{ limit:500 },
+      activity:'Locales POS...'
+    });
+  }
+
+  let configs = rawConfigs;
+  if(!hasStockLocationField){
+    const pickingTypeIds = [...new Set(rawConfigs.map((c)=> Array.isArray(c.picking_type_id) ? c.picking_type_id[0] : c.picking_type_id).filter(Boolean))];
+    let pickingTypeById = new Map();
+    if(pickingTypeIds.length){
+      const pickingTypes = await executeKw({
+        model:'stock.picking.type',
+        method:'read',
+        params:[pickingTypeIds, ['id','default_location_src_id','default_location_dest_id']],
+        kwargs:{},
+        activity:'Tipos POS...'
+      });
+      pickingTypeById = new Map(pickingTypes.map((pt)=> [pt.id, pt]));
+    }
+    configs = rawConfigs.map((cfg)=> {
+      const pickingTypeId = Array.isArray(cfg.picking_type_id) ? cfg.picking_type_id[0] : cfg.picking_type_id;
+      const pickingType = pickingTypeId ? pickingTypeById.get(pickingTypeId) : null;
+      const src = pickingType?.default_location_src_id || false;
+      const dest = pickingType?.default_location_dest_id || false;
+      return { ...cfg, stock_location_id: src || dest || false };
+    });
+  }
+
+  const posNameByStockLocationId = new Map();
+  configs.forEach((cfg)=> {
+    const locId = Array.isArray(cfg.stock_location_id) ? cfg.stock_location_id[0] : cfg.stock_location_id;
+    if(locId) posNameByStockLocationId.set(locId, cfg.name);
+  });
+
+  const rootsByPath = [];
+  for(const [locId, posName] of posNameByStockLocationId.entries()){
+    const loc = locationById.get(locId);
+    const rootPath = String(loc?.complete_name || loc?.name || '').trim();
+    if(rootPath) rootsByPath.push({ rootPath, posName });
+  }
+  rootsByPath.sort((a,b)=> b.rootPath.length - a.rootPath.length);
+
+  let current = locationById.get(locationId);
+  const visited = new Set();
+  for(let i=0; i<20 && current && !visited.has(current.id); i+=1){
+    visited.add(current.id);
+    const direct = posNameByStockLocationId.get(current.id);
+    if(direct) return direct;
+    const parentId = Array.isArray(current.location_id) ? current.location_id[0] : current.location_id;
+    if(!parentId) break;
+    current = locationById.get(parentId);
+  }
+
+  const currentPath = String(locationById.get(locationId)?.complete_name || locationById.get(locationId)?.name || '').trim();
+  if(currentPath){
+    for(const root of rootsByPath){
+      if(currentPath === root.rootPath || currentPath.startsWith(`${root.rootPath}/`)) return root.posName;
+    }
+  }
+
+  return '';
+}
+
 // Página de creación de entradas (picking incoming) con promedio de costos
 export default function EntryPage(){
   useEffect(()=> { applyPageMeta({ title: 'Entradas', favicon: '/logo192.png' }); }, []);
@@ -45,7 +138,13 @@ export default function EntryPage(){
     try {
       const ws = await executeKw({ model:'stock.warehouse', method:'search_read', params:[[['name','=','Bodega']], ['name','lot_stock_id']], kwargs:{ limit:1 }, activity:'Almacén Bodega...' });
       if(!ws.length) throw new Error('Almacén "Bodega" no encontrado');
-      setWarehouseId(ws[0].id); setWarehouseName(ws[0].name);
+      const lotStockId = Array.isArray(ws[0].lot_stock_id) ? ws[0].lot_stock_id[0] : ws[0].lot_stock_id;
+      let displayName = ws[0].name;
+      try {
+        displayName = (await resolvePosNameForLocation(executeKw, lotStockId)) || ws[0].name;
+      } catch(_){}
+      setWarehouseId(ws[0].id);
+      setWarehouseName(displayName);
     } catch(e){ setError(e.message);} finally { setLoading(false); setStep(''); }
   })(); },[auth, executeKw]);
 
