@@ -79,10 +79,23 @@ export async function sendChatMessage({ chat, message, timeoutMs = 10000 }){
   } else {
     url = root + 'whatsapp/send-text';
   }
+  // Anti-cache fuerte (cliente/proxy) para evitar payloads viejos.
+  const cacheBust = `_t=${Date.now()}`;
+  url = url.includes('?') ? `${url}&${cacheBust}` : `${url}?${cacheBust}`;
   const body = JSON.stringify({ chat, message });
   try {
     console.info('[notify] enviando chat', { chat, len: message.length, url });
-    const res = await fetchWithTimeout(url, { method:'POST', headers: { 'Content-Type':'application/json', 'accept':'application/json' }, body }, timeoutMs);
+    const res = await fetchWithTimeout(url, {
+      method:'POST',
+      cache:'no-store',
+      headers: {
+        'Content-Type':'application/json',
+        'accept':'application/json',
+        'Cache-Control':'no-store, no-cache, max-age=0, must-revalidate',
+        'Pragma':'no-cache',
+      },
+      body
+    }, timeoutMs);
     const data = await safeJson(res);
     if(res.ok){
       console.info('[notify] enviado', { chat });
@@ -93,6 +106,59 @@ export async function sendChatMessage({ chat, message, timeoutMs = 10000 }){
   } catch(e){
     return { ok:false, error: e?.message || 'Error de red' };
   }
+}
+
+// Limpia caches del navegador para forzar datos/asset frescos y reinicia cache interno de notify.
+export async function clearNotifyLocalCache(){
+  try {
+    if(typeof window !== 'undefined'){
+      window.__LAST_CHAT_SENDS = [];
+      delete window.__LAST_NOTIFY_BASE;
+      try { localStorage.removeItem('app:view'); } catch(_){}
+    }
+    if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations?.();
+      await Promise.all((regs || []).map((r)=> r.unregister()));
+    }
+    if (typeof caches !== 'undefined' && caches.keys) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((k)=> caches.delete(k)));
+    }
+    return { ok:true };
+  } catch(e){
+    return { ok:false, error: e?.message || 'No se pudo limpiar cache local' };
+  }
+}
+
+// Limpieza global best-effort: intenta endpoint de backend si existe.
+export async function clearNotifyServerCache({ timeoutMs = 8000 } = {}){
+  const root = baseUrl();
+  if(!root) return { ok:false, error:'REACT_APP_NOTIFY_URL no definida' };
+  const candidates = [];
+  if(/whatsapp\/send-text\/?$/i.test(root)){
+    candidates.push(root.replace(/whatsapp\/send-text\/?$/i, 'whatsapp/clear-cache'));
+  } else {
+    candidates.push(root + 'whatsapp/clear-cache');
+  }
+  candidates.push(root + 'notify/clear-cache');
+  candidates.push(root + 'cache/clear');
+
+  for(const endpoint of candidates){
+    try {
+      const url = endpoint.includes('?') ? `${endpoint}&_t=${Date.now()}` : `${endpoint}?_t=${Date.now()}`;
+      const res = await fetchWithTimeout(url, {
+        method:'POST',
+        cache:'no-store',
+        headers:{
+          'accept':'application/json',
+          'Cache-Control':'no-store, no-cache, max-age=0, must-revalidate',
+          'Pragma':'no-cache',
+        },
+      }, timeoutMs);
+      if(res.ok) return { ok:true, endpoint };
+    } catch(_){ /* continuar */ }
+  }
+  return { ok:false, error:'No existe endpoint de limpieza global en el backend notify' };
 }
 
 // Helpers de formato conservados del módulo anterior
@@ -117,4 +183,3 @@ export function buildPedidoMessage({ reference, cliente, items }){
   const body = formatLinesBullet(lines);
   return `${header}\n${ref}\nCliente: ${cliente}\n${body}`.trim();
 }
-

@@ -401,20 +401,22 @@ export default function TransferPage() {
     try {
       const originLoc = locations.find(l => String(l.id) === String(origin));
       const destLoc = locations.find(l => String(l.id) === String(dest));
+      const originDisplayName = originLoc ? getLocationLabel(locationById.get(originLoc.id) || originLoc) : String(origin);
+      const destDisplayName = destLoc ? getLocationLabel(locationById.get(destLoc.id) || destLoc) : String(dest);
   const res = await createInternalTransfer(executeKwSilent, {
         originLocationId: Number(origin),
         destLocationId: Number(dest),
         lines: lines.map(l => ({ productId: l.productId, quantity: l.quantity, name: l.name })),
-        originLabel: originLoc?.name,
-        destLabel: destLoc?.name,
+        originLabel: originDisplayName,
+        destLabel: destDisplayName,
         onProgress: (k) => setProgressStep(k),
         note: auth?.name || ''
       });
       // Enriquecer resultado con resumen de líneas (antes / después)
       const enriched = {
         ...res,
-        originLabel: originLoc ? getLocationLabel(locationById.get(originLoc.id) || originLoc) : origin,
-        destLabel: destLoc ? getLocationLabel(locationById.get(destLoc.id) || destLoc) : dest,
+        originLabel: originDisplayName,
+        destLabel: destDisplayName,
         lines: lines.filter(l=>l.productId).map(l=>({
           productId: l.productId,
           name: l.name,

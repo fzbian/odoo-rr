@@ -185,6 +185,77 @@ async function createAndValidateInternalTransfer({ originLocationId, destLocatio
   return { pickingId, picking, result };
 }
 
+async function resolvePosNameByLocationId(locationId) {
+  if (!locationId) return '';
+
+  const locFields = ['id', 'name', 'complete_name', 'location_id'];
+  const allLocs = await odooExecuteKw('stock.location', 'search_read', [[]], { fields: locFields, limit: 5000 });
+  const locationById = new Map(allLocs.map((l) => [l.id, l]));
+
+  let rawConfigs = [];
+  let hasStockLocationField = true;
+  try {
+    rawConfigs = await odooExecuteKw('pos.config', 'search_read', [[]], { fields: ['id', 'name', 'stock_location_id', 'picking_type_id'], limit: 500 });
+  } catch (e) {
+    const msg = String(e?.message || '');
+    if (!/Invalid field ['"]stock_location_id['"] on model ['"]pos\.config['"]/i.test(msg)) throw e;
+    hasStockLocationField = false;
+    rawConfigs = await odooExecuteKw('pos.config', 'search_read', [[]], { fields: ['id', 'name', 'picking_type_id'], limit: 500 });
+  }
+
+  let configs = rawConfigs;
+  if (!hasStockLocationField) {
+    const pickingTypeIds = [...new Set(rawConfigs.map((c) => Array.isArray(c.picking_type_id) ? c.picking_type_id[0] : c.picking_type_id).filter(Boolean))];
+    let pickingTypeById = new Map();
+    if (pickingTypeIds.length) {
+      const pts = await odooExecuteKw('stock.picking.type', 'read', [pickingTypeIds], { fields: ['id', 'default_location_src_id', 'default_location_dest_id'] });
+      pickingTypeById = new Map(pts.map((pt) => [pt.id, pt]));
+    }
+    configs = rawConfigs.map((cfg) => {
+      const ptId = Array.isArray(cfg.picking_type_id) ? cfg.picking_type_id[0] : cfg.picking_type_id;
+      const pt = ptId ? pickingTypeById.get(ptId) : null;
+      const src = pt?.default_location_src_id || false;
+      const dest = pt?.default_location_dest_id || false;
+      return { ...cfg, stock_location_id: src || dest || false };
+    });
+  }
+
+  const posNameByStockLocationId = new Map();
+  configs.forEach((cfg) => {
+    const locId = Array.isArray(cfg.stock_location_id) ? cfg.stock_location_id[0] : cfg.stock_location_id;
+    if (locId) posNameByStockLocationId.set(locId, cfg.name);
+  });
+
+  const rootsByPath = [];
+  for (const [stockLocId, posName] of posNameByStockLocationId.entries()) {
+    const loc = locationById.get(stockLocId);
+    const rootPath = String(loc?.complete_name || loc?.name || '').trim();
+    if (rootPath) rootsByPath.push({ rootPath, posName });
+  }
+  rootsByPath.sort((a, b) => b.rootPath.length - a.rootPath.length);
+
+  let current = locationById.get(locationId);
+  const visited = new Set();
+  for (let i = 0; i < 20 && current && !visited.has(current.id); i += 1) {
+    visited.add(current.id);
+    const direct = posNameByStockLocationId.get(current.id);
+    if (direct) return direct;
+    const parentId = Array.isArray(current.location_id) ? current.location_id[0] : current.location_id;
+    if (!parentId) break;
+    current = locationById.get(parentId);
+  }
+
+  const currentPath = String(locationById.get(locationId)?.complete_name || locationById.get(locationId)?.name || '').trim();
+  if (currentPath) {
+    for (const root of rootsByPath) {
+      if (currentPath === root.rootPath || currentPath.startsWith(`${root.rootPath}/`)) return root.posName;
+    }
+  }
+
+  const fallbackLoc = locationById.get(locationId);
+  return String(fallbackLoc?.complete_name || fallbackLoc?.name || locationId || '');
+}
+
 async function sendWhatsappNotification(text) {
   try {
     const { data } = await axios.post(
@@ -223,8 +294,10 @@ app.post('/api/transfer', async (req, res) => {
     const { originLocationId, destLocationId, lines, notes } = req.body;
     const { pickingId, picking } = await createAndValidateInternalTransfer({ originLocationId, destLocationId, lines, notes });
 
-    const originName = Array.isArray(picking.location_id) ? picking.location_id[1] : picking.location_id;
-    const destName = Array.isArray(picking.location_dest_id) ? picking.location_dest_id[1] : picking.location_dest_id;
+    const originId = Array.isArray(picking.location_id) ? picking.location_id[0] : picking.location_id;
+    const destId = Array.isArray(picking.location_dest_id) ? picking.location_dest_id[0] : picking.location_dest_id;
+    const originName = await resolvePosNameByLocationId(originId);
+    const destName = await resolvePosNameByLocationId(destId);
 
     const text = `✅ Traspaso confirmado\n• Picking: ${picking.name}\n• De: ${originName}\n• A: ${destName}\n• Líneas: ${lines.length}\n• Nota: ${notes || '-'}\n\nATM Ricky Rich`;
     const notify = await sendWhatsappNotification(text);

@@ -245,7 +245,7 @@ export default function EntryPage(){
         const prodLines = confirmData.map(l=> `• ${l.name} (+${formatQty(l.incomingQty)})`).join('\n');
         const msg = [
           '📦 *Entrada creada*',
-          `${bold('Entrada a')}: ${warehouseName || 'Bodega'}`,
+          `${bold('Entrada a')}: ${warehouseName || 'Local POS'}`,
           '',
           bold('Productos'),
           prodLines
@@ -313,7 +313,7 @@ export default function EntryPage(){
       <h1 className="m-0 font-heading font-extrabold text-lg sm:text-xl tracking-tight flex items-center gap-2 mb-4 sm:mb-6"><span className="material-symbols-outlined text-[var(--primary-color)]">login</span>Nueva entrada</h1>
       <div className="mb-4 sm:mb-6 text-[10px] sm:text-xs text-[var(--text-secondary-color)] flex items-center gap-2">
         <span className="material-symbols-outlined text-[var(--primary-color)] text-base">store</span>
-        Almacén destino fijo: <span className="kbd">{warehouseName || (loading? 'Cargando…':'Bodega')}</span>
+        Almacén destino fijo: <span className="kbd">{warehouseName || (loading? 'Cargando…':'Local POS')}</span>
       </div>
       <div className="grid gap-3 sm:gap-4">
         <div className="rounded-lg border border-[var(--border-color)] bg-[var(--card-color)]">
